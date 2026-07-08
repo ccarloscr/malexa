@@ -1,0 +1,1 @@
+pip install ipykernel scikit-learn xgboost pandas matplotlib pyarrow

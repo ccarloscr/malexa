@@ -1,0 +1,18 @@
+# Jupyter notebook temp files
+.ipynb_checkpoints/
+
+# Virtual envs
+venv/
+env/
+.venv/
+
+# Datasets
+*.parquet
+*.csv
+*.json
+data/
+
+
+# Python cache
+__pycache__/
+*.pyc
