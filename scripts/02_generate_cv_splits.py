@@ -50,7 +50,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from sklearn.model_selection import StratifiedKFold
+from sklearn.model_selection import RepeatedStratifiedKFold
 
 
 # --------------------------------------------------------------------------- #
@@ -203,8 +203,8 @@ def extract_labels(clinical, task_name, task_config, config, logger):
 # --------------------------------------------------------------------------- #
 # CV split generation
 # --------------------------------------------------------------------------- #
-def generate_splits(labels, n_splits, random_seed, logger):
-    """Run StratifiedKFold and return a list of fold dicts.
+def generate_splits(labels, n_splits, n_repeats, random_seed, logger):
+    """Run RepeatedStratifiedKFold and return a list of fold dicts.
 
     Each dict contains:
       {"fold": int, "train": [sample_id, ...], "test": [sample_id, ...]}
@@ -212,12 +212,20 @@ def generate_splits(labels, n_splits, random_seed, logger):
     Sample IDs are stored as strings so the JSON is unambiguous and the
     downstream scripts can use .loc[] directly.
     """
-    skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=random_seed)
+    rskf = RepeatedStratifiedKFold(
+        n_splits=n_splits,
+        n_repeats=n_repeats,
+        shuffle=True,
+        random_state=random_seed
+    )
     sample_ids = labels.index.astype(str).tolist()
     y = labels.values
 
     folds = []
-    for fold_idx, (train_pos, test_pos) in enumerate(skf.split(sample_ids, y)):
+    
+    for idx, (train_pos, test_pos) in enumerate(rskf.split(sample_ids, y)):
+        repeat  = idx // n_splits
+        fold    = idx  % n_splits
         train_ids = [sample_ids[i] for i in train_pos]
         test_ids  = [sample_ids[i] for i in test_pos]
 
@@ -225,11 +233,15 @@ def generate_splits(labels, n_splits, random_seed, logger):
         train_counts = pd.Series(y[train_pos]).value_counts().to_dict()
         test_counts  = pd.Series(y[test_pos]).value_counts().to_dict()
         logger.info(
-            f"  Fold {fold_idx}: train={len(train_ids)} {train_counts}  "
-            f"test={len(test_ids)} {test_counts}"
+            f"  Repeat {repeat} Fold {fold_idx}: train={len(train_ids)} "
+            f"{train_counts} test={len(test_ids)} {test_counts}"
         )
 
-        folds.append({"fold": fold_idx, "train": train_ids, "test": test_ids})
+        folds.append({
+            "fold": fold_idx,
+            "train": train_ids,
+            "test": test_ids
+        })
 
     return folds
 
@@ -272,6 +284,7 @@ def main(expression_path, clinical_path, task_name, config,
         f"Generating {n_splits}-fold stratified CV "
         f"(random_seed={random_seed}) ..."
     )
+    n_repeats   = config["cv"].get("n_repeats", 10)
     folds = generate_splits(labels, n_splits, random_seed, logger)
 
     # ------------------------------------------------------------------ #
@@ -283,6 +296,8 @@ def main(expression_path, clinical_path, task_name, config,
         "task":          task_name,
         "label_col":     task_config["label_col"],
         "n_splits":      n_splits,
+        "n_repeats":     n_repeats,
+        "total_splits":  n_splits * n_repeats,
         "random_seed":   random_seed,
         "label_counts":  label_counts,
         "samples_dropped_unknown_label": dropped_samples,

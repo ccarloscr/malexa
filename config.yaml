@@ -21,7 +21,8 @@ data:
 # -----------------------------------------------------------------------------
 cv:
   n_splits:      5        # number of stratified K-folds
-  random_seed:   42       # fixed seed for reproducibility across tasks and models
+  n_repeats:     10       # number of repetitions
+  random_seed:   123      # fixed seed for reproducibility across tasks and models
 
 
 # -----------------------------------------------------------------------------

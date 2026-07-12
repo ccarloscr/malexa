@@ -1,7 +1,7 @@
 """
 01_load_clean_data.py
 
-Load raw TCGA-LUAD RNA-seq counts and clinical metadata, align samples by
+Load raw RNA-seq counts and clinical metadata, align samples by
 sample_id, and clean missing/invalid values.
 
 This step is intentionally generic and task-agnostic:
@@ -60,10 +60,12 @@ def get_logger(log_path=None):
 # --------------------------------------------------------------------------- #
 def load_counts(path):
     """Load raw counts matrix: genes as rows, samples as columns."""
-    counts = pd.read_csv(path, index_col=0)
+    path = Path(path)
+    if path.suffix == ".parquet":
+        counts = pd.read_parquet(path)
+    else:
+        counts = pd.read_csv(path, index_col=0)
     if counts.index.duplicated().any():
-        # Common with GDC exports when multiple probes/versions map to one
-        # gene symbol; sum raw counts for duplicated gene identifiers.
         counts = counts.groupby(counts.index).sum()
     return counts
 
@@ -148,9 +150,9 @@ def clean_expression_missing(counts, max_gene_missing_frac, max_sample_missing_f
 def standardize_mutation_column(series, colname, logger):
     """Map common mutation-status encodings to {0, 1}; unmapped -> NaN (unknown)."""
     mapping = {
-        "wt": 0, "wild type": 0, "wildtype": 0, "wild-type": 0,
+        "false": 0, "wt": 0, "wild type": 0, "wildtype": 0, "wild-type": 0,
         "0": 0, "0.0": 0, "no": 0, "negative": 0, "none": 0,
-        "mut": 1, "mutant": 1, "mutated": 1, "1": 1, "1.0": 1,
+        "true": 1, "mut": 1, "mutant": 1, "mutated": 1, "1": 1, "1.0": 1,
         "yes": 1, "positive": 1,
     }
     original_na = series.isna()

@@ -13,6 +13,7 @@ dependencies:
   # Data handling
   - pandas>=1.5
   - numpy>=1.23
+  - pyarrow
 
   # Machine learning
   - scikit-learn>=1.1
