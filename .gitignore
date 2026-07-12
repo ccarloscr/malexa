@@ -1,5 +1,9 @@
+# macOS
+.DS_Store
+
 # Jupyter notebook temp files
 .ipynb_checkpoints/
+.jupyter/
 
 # Virtual envs
 venv/

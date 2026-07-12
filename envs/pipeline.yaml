@@ -1,0 +1,29 @@
+name: luad-pipeline
+channels:
+  - conda-forge
+  - bioconda
+  - defaults
+dependencies:
+  - python=3.10
+  - pip
+
+  # Workflow
+  - snakemake-minimal>=7.0
+
+  # Data handling
+  - pandas>=1.5
+  - numpy>=1.23
+
+  # Machine learning
+  - scikit-learn>=1.1
+  - xgboost>=1.7
+
+  # Visualisation
+  - matplotlib>=3.6
+
+  # Config parsing
+  - pyyaml>=6.0
+
+  # Serialisation (model.pkl)
+  - pip:
+    - xgboost>=1.7   # fallback if conda-forge xgboost lags

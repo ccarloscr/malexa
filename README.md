@@ -1,12 +1,17 @@
-# TCGA-LUAD Expression-Based Classification Pipeline
+# MALEXA
+## MAchine Learning EXpression-based Algorithms
 
-A config-driven, reproducible Snakemake pipeline for predicting cancer stage and somatic mutation status from TCGA-LUAD RNA-seq raw counts. Designed to run unchanged on a laptop, an HPC cluster (SLURM), or AWS.
+MALEXA uses RNA-seq raw expression data to predict cancer stage and somatic mutational status. It is built on Python and is designed to run via Snakemake locally, on an HPC cluster (SLURM), or on AWS.
 
 ---
 
 ## Overview
 
-This pipeline addresses two independent classification problems using bulk RNA-seq expression profiles from the GDC TCGA Lung Adenocarcinoma (LUAD) cohort (n = 517 samples):
+This pipeline addresses two independent classification problems using bulk RNA-seq expression profiles and clinical metadata (required labels to test and train the model): cancer stage and mutation status of set genes.
+
+> For convenience, running PyGDC-RNA-ETL results in the recommended input data to run MALEXA. Alternatively, any pair of RNA-seq raw count matrix and clinical metadata csv file with the specifications listed in the requirements section is suitable.
+
+The sample dataset is a cohort (n = 517) from the GDC TCGA Lung Adenocarcinoma (LUAD) project.
 
 | Question | Target | Models |
 |---|---|---|
@@ -16,10 +21,9 @@ This pipeline addresses two independent classification problems using bulk RNA-s
 
 Key design principles:
 
-- **Config-driven, not code-driven.** Tasks, models, hyperparameter grids, evaluation metrics, and clinical column names are all declared in `config.yaml`. Adding a new task or model requires no changes to any script.
+- **Config-driven.** Tasks, models, hyperparameter grids, evaluation metrics, and clinical column names are all declared in `config.yaml`. Adding a new task or model requires no changes to any script.
 - **Leakage-free CV.** Cross-validation splits are generated once per task (stratified, fixed seed) and shared by all models, enabling fair comparison. Fold-local feature selection (CPM filter + variance filter) is applied inside `03_train_model.py` on training data only.
 - **Separation of concerns.** Each pipeline stage is a standalone script that can be run via Snakemake or directly from the CLI for debugging.
-- **Portable.** No absolute paths or hardcoded task logic anywhere in the codebase.
 
 ---
 
