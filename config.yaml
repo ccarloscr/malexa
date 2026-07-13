@@ -1,8 +1,8 @@
 # =============================================================================
-# config.yaml — TCGA-LUAD expression-based classification pipeline
+# config.yaml — MALEXA: MAchine Learning EXpression Algorithms
 #
-# All pipeline behaviour is controlled from here. Scripts and the Snakefile
-# contain no hardcoded task/model logic — they read everything from this file.
+# Pipeline parameters are controlled from this file
+# CLI options override this file.
 # =============================================================================
 
 
@@ -10,9 +10,9 @@
 # Paths
 # -----------------------------------------------------------------------------
 data:
-  counts_file:   "data/raw/tcga_luad_counts.csv"      # genes x samples, CSV
-  clinical_file: "data/raw/tcga_luad_clinical.csv"    # samples x features, CSV
-  sample_id_col: "sample_id"                          # column name in clinical CSV that matches count matrix columns
+  counts_file:   "data/raw/counts.parquet"    # genes x samples (CSV or Parquet format)
+  clinical_file: "data/raw/clinical.csv"      # samples x features (CSV format)
+  sample_id_col: "sample_id"                  # column name in clinical CSV that matches count matrix columns
   output_dir:    "results"
 
 
@@ -20,16 +20,14 @@ data:
 # Cross-validation
 # -----------------------------------------------------------------------------
 cv:
-  n_splits:      5        # number of stratified K-folds
-  n_repeats:     10       # number of repetitions
-  random_seed:   123      # fixed seed for reproducibility across tasks and models
-
+  method: RepeatedStratifiedKFold   # Supported: StratifiedKFold, RepeatedStratifiedKFold, StratifiedShuffleSplit
+  random_seed: 123                  # Fixed seed for reproducibility across taska and models
+  n_splits: 5                       # Number of stratified k-folds (required for StratifiedKFold & RepeatedStratifiedKFold)
+  n_repeats: 10                     # Number of repetitions (required for RepeatedStratifiedKFold)
+  test_size: 0.2                    # Proportion (float) or absolute number (int) os samples to include in test split. (StratifiedShuffleSplit only)
 
 # -----------------------------------------------------------------------------
 # Pre-processing thresholds (applied in 01_load_clean_data.py)
-# These are intentionally conservative — real leakage-safe feature selection
-# (low-expression / low-variance filtering) happens inside each CV fold in
-# 03_train_model.py.
 # -----------------------------------------------------------------------------
 preprocessing:
   max_gene_missing_frac:   0.20   # drop gene if >20 % of samples have missing raw counts

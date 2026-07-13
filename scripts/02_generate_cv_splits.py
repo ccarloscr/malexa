@@ -1,10 +1,10 @@
 """
 02_generate_cv_splits.py
 
-Generate stratified k-fold cross-validation split indices for one task and
-write them to a JSON file.  This script runs ONCE per task before any model
-training, so all models for a given task are evaluated on identical folds —
-making model comparison fair without any data-snooping risk.
+Generate selected method for cross-validation split indices for one
+task and write them to a JSON file.  This script runs ONCE per task before
+any model training, so all models for a given task are evaluated on identical
+folds, so model comparison is fair and reproducible.
 
 What this script does:
   - Reads the clean expression matrix and clinical metadata written by
@@ -15,7 +15,6 @@ What this script does:
     stage cannot be mapped are excluded and logged.
   - For mutation-status tasks: drops samples where the status is NaN (unknown
     after 01_load_clean_data.py standardisation).
-  - Runs StratifiedKFold with the seed from config.yaml.
   - Writes a JSON file containing, for each fold, the list of sample IDs
     assigned to the training set and the test set.  Indices are sample IDs
     (strings), not integer positions, so they remain valid even if the matrix
@@ -40,7 +39,7 @@ Output JSON schema
   ]
 }
 
-Runnable as a Snakemake script: or standalone from the CLI for testing.
+Run as a Snakemake script or standalone from the CLI for testing.
 """
 
 import json
@@ -50,7 +49,9 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from sklearn.model_selection import RepeatedStratifiedKFold
+from sklearn.model_selection import (StratifiedKFold,
+                                     RepeatedStratifiedKFold,
+                                     StratifiedShuffleSplit)
 
 
 # --------------------------------------------------------------------------- #
@@ -203,47 +204,68 @@ def extract_labels(clinical, task_name, task_config, config, logger):
 # --------------------------------------------------------------------------- #
 # CV split generation
 # --------------------------------------------------------------------------- #
-def generate_splits(labels, n_splits, n_repeats, random_seed, logger):
-    """Run RepeatedStratifiedKFold and return a list of fold dicts.
+SUPPORTED_CV_METHODS = {"StratifiedKFold", "RepeatedStratifiedKFold", "StratifiedShuffleSplit"}
+
+
+def generate_splits(labels, cv_config, logger):
+    """Run the configured CV strategy and return a list of fold dicts.
 
     Each dict contains:
-      {"fold": int, "train": [sample_id, ...], "test": [sample_id, ...]}
+      {"repeat": int, "fold": int, "train": [sample_id, ...], "test": [sample_id, ...]}
 
-    Sample IDs are stored as strings so the JSON is unambiguous and the
-    downstream scripts can use .loc[] directly.
+    Supported methods (cv_config["method"]):
+      - StratifiedKFold
+      - RepeatedStratifiedKFold
+      - StratifiedShuffleSplit
     """
-    rskf = RepeatedStratifiedKFold(
-        n_splits=n_splits,
-        n_repeats=n_repeats,
-        shuffle=True,
-        random_state=random_seed
-    )
-    sample_ids = labels.index.astype(str).tolist()
-    y = labels.values
+
+    method = cv_config.get("method")
+    if method not in SUPPORTED_CV_METHODS:
+        raise ValueError(
+            f"Unsupported CV method '{method}'. "
+            f"Choose one of: {sorted(SUPPORTED_CV_METHODS)}"
+        )
+
+    seed = cv_config.get("random_seed", 123)
+
+    if method     == "StratifiedKFold":
+        cv        = StratifiedKFold(n_splits=cv_config["n_splits"], shuffle=True, random_state=seed)
+        n_splits  = cv_config["n_splits"]
+        n_repeats = 1
+
+    elif method   == "RepeatedStratifiedKFold":
+        cv        = RepeatedStratifiedKFold(n_splits=cv_config["n_splits"], n_repeats=cv_config["n_repeats"], random_state=seed)
+        n_splits  = cv_config["n_splits"]
+        n_repeats = cv_config["n_repeats"]
+
+    elif method   == "StratifiedShuffleSplit":
+        cv        = StratifiedShuffleSplit(n_splits=cv_config["n_splits"], test_size=cv_config["test_size"], random_state=seed)
+        n_splits  = cv_config["n_splits"]
+        n_repeats = 1
+
+    sample_ids    = labels.index.astype(str).tolist()
+    y             = labels.values
 
     folds = []
     
-    for idx, (train_pos, test_pos) in enumerate(rskf.split(sample_ids, y)):
-        repeat  = idx // n_splits
-        fold    = idx  % n_splits
+    for idx, (train_pos, test_pos) in enumerate(cv.split(sample_ids, y)):
+        repeat = idx // n_splits
+        fold   = idx  % n_splits
+
         train_ids = [sample_ids[i] for i in train_pos]
         test_ids  = [sample_ids[i] for i in test_pos]
 
-        # quick per-fold class balance report
         train_counts = pd.Series(y[train_pos]).value_counts().to_dict()
         test_counts  = pd.Series(y[test_pos]).value_counts().to_dict()
         logger.info(
-            f"  Repeat {repeat} Fold {fold_idx}: train={len(train_ids)} "
-            f"{train_counts} test={len(test_ids)} {test_counts}"
+            f"  [{method}] Repeat {repeat} Fold {fold}: "
+            f"train={len(train_ids)} {train_counts} "
+            f"test={len(test_ids)} {test_counts}"
         )
 
-        folds.append({
-            "fold": fold_idx,
-            "train": train_ids,
-            "test": test_ids
-        })
+        folds.append({"repeat": repeat, "fold": fold, "train": train_ids, "test": test_ids})
 
-    return folds
+    return folds, n_splits, n_repeats
 
 
 # --------------------------------------------------------------------------- #
@@ -251,12 +273,13 @@ def generate_splits(labels, n_splits, n_repeats, random_seed, logger):
 # --------------------------------------------------------------------------- #
 def main(expression_path, clinical_path, task_name, config,
          out_splits, log_path=None):
+    
     logger = get_logger(log_path)
 
     logger.info(f"Task: {task_name}")
     logger.info(f"Loading expression index from: {expression_path}")
-    # We only need the sample IDs from the expression file (column headers).
-    # Reading just the first row is much faster for large matrices.
+
+    # Read only the sample_id column from the expression matrix
     expression_samples = pd.read_csv(expression_path, index_col=0, nrows=0).columns.tolist()
     logger.info(f"Expression matrix has {len(expression_samples)} samples.")
 
@@ -264,7 +287,7 @@ def main(expression_path, clinical_path, task_name, config,
     clinical = pd.read_csv(clinical_path, index_col=0)
     logger.info(f"Clinical table: {clinical.shape[0]} samples x {clinical.shape[1]} columns")
 
-    # restrict clinical to samples present in the expression matrix
+    # Restrict clinical data to samples present in the expression matrix
     common_samples = [s for s in expression_samples if s in clinical.index]
     n_missing = len(expression_samples) - len(common_samples)
     if n_missing:
@@ -275,30 +298,25 @@ def main(expression_path, clinical_path, task_name, config,
     clinical = clinical.loc[common_samples]
 
     task_config = config["tasks"][task_name]
-    n_splits    = config["cv"]["n_splits"]
-    random_seed = config["cv"]["random_seed"]
+    cv_config   = config["cv"]
+    method      = cv_config.get("method")
 
     labels, dropped_samples = extract_labels(clinical, task_name, task_config, config, logger)
 
-    logger.info(
-        f"Generating {n_splits}-fold stratified CV "
-        f"(random_seed={random_seed}) ..."
-    )
-    n_repeats   = config["cv"].get("n_repeats", 10)
-    folds = generate_splits(labels, n_splits, random_seed, logger)
+    logger.info(f"Generating CV splits (method={method}) ...")
+    folds, n_splits, n_repeats = generate_splits(labels, cv_config, logger)
 
-    # ------------------------------------------------------------------ #
-    # write output
-    # ------------------------------------------------------------------ #
+
     label_counts = {str(k): int(v) for k, v in labels.value_counts().items()}
 
     result = {
         "task":          task_name,
         "label_col":     task_config["label_col"],
+        "cv_method":     method,
         "n_splits":      n_splits,
         "n_repeats":     n_repeats,
         "total_splits":  n_splits * n_repeats,
-        "random_seed":   random_seed,
+        "random_seed":   cv_config.get("random_seed", 123),
         "label_counts":  label_counts,
         "samples_dropped_unknown_label": dropped_samples,
         "folds":         folds,
@@ -314,42 +332,60 @@ def main(expression_path, clinical_path, task_name, config,
 # --------------------------------------------------------------------------- #
 # entry points
 # --------------------------------------------------------------------------- #
+#
 if __name__ == "__main__":
+
+    # Snakemake entry point
+    # config.yaml loaded by default
+    # Any config.yaml parameter can be overriden via CLI (--config key=value)
     if "snakemake" in globals():
         main(
-            expression_path=snakemake.input.expression,
-            clinical_path=snakemake.input.clinical,
-            task_name=snakemake.params.task,
-            config=snakemake.config,
-            out_splits=snakemake.output.splits,
-            log_path=snakemake.log[0] if len(snakemake.log) else None,
+            expression_path  = snakemake.input.expression,
+            clinical_path    = snakemake.input.clinical,
+            task_name        = snakemake.params.task,
+            config           = snakemake.config,
+            out_splits       = snakemake.output.splits,
+            log_path         = snakemake.log[0] if len(snakemake.log) else None,
         )
+
+    # Standalone entry point (Snakemake-independent)  
+    # config.yaml must be provided via --config
+    # cv.method can be overridden via --cv-method 
     else:
         import argparse
         import yaml
 
+        # --- argument definitions ---
+        # paths and task are required: --cv-method
         parser = argparse.ArgumentParser(description=__doc__)
-        parser.add_argument("--expression", required=True,
-                            help="Path to clean expression CSV (output of script 01)")
-        parser.add_argument("--clinical",   required=True,
-                            help="Path to clean clinical CSV (output of script 01)")
-        parser.add_argument("--task",       required=True,
-                            help="Task name as defined in config.yaml (e.g. cancer_stage)")
-        parser.add_argument("--config",     required=True,
-                            help="Path to config.yaml")
-        parser.add_argument("--out-splits", required=True,
-                            help="Output path for the splits JSON file")
+        parser.add_argument("--expression", required=True, help="Path to clean expression CSV (output of script 01)")
+        parser.add_argument("--clinical",   required=True, help="Path to clean clinical CSV (output of script 01)")
+        parser.add_argument("--task",       required=True, help="Task name as defined in config.yaml (e.g. cancer_stage)")
+        parser.add_argument("--config",     required=True, help="Path to config.yaml")
+        parser.add_argument("--out-splits", required=True, help="Output path for the splits JSON file")  
         parser.add_argument("--log",        default=None)
+        # Added CLI option (--cv-method) to parse the CV method independently from the config.yaml
+        parser.add_argument("--cv-method",  default=None,
+                            choices=["StratifiedKFold", "RepeatedStratifiedKFold", "StratifiedShuffleSplit"],
+                            help="Override cv.method from config.yaml")
         args = parser.parse_args()
 
+        # --- load and optionally patch config ---
+
+        # reads config.yaml into a dict
         with open(args.config) as f:
             cfg = yaml.safe_load(f)
 
+        # --cv-method patches cv.method if provided
+        if args.cv_method:
+            cfg["cv"]["method"] = args.cv_method
+
+        # Run
         main(
-            expression_path=args.expression,
-            clinical_path=args.clinical,
-            task_name=args.task,
-            config=cfg,
-            out_splits=args.out_splits,
-            log_path=args.log,
+            expression_path  = args.expression,
+            clinical_path    = args.clinical,
+            task_name        = args.task,
+            config           = cfg,
+            out_splits       = args.out_splits,
+            log_path         = args.log,
         )

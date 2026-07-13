@@ -146,8 +146,8 @@ All pipeline behaviour is controlled from `config.yaml`. Scripts contain no hard
 
 ```yaml
 data:
-  counts_file:   "data/raw/tcga_luad_counts.csv"
-  clinical_file: "data/raw/tcga_luad_clinical.csv"
+  counts_file:   "data/counts.parquet"
+  clinical_file: "data/clinical.csv"
   sample_id_col: "sample_id"
   output_dir:    "results"
 
