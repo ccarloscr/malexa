@@ -124,6 +124,9 @@ def binarize_stage(series, stage_map, logger):
     return binarized
 
 
+# --------------------------------------------------------------------------- #
+# NAME HERE???
+# --------------------------------------------------------------------------- #
 def extract_labels(clinical, task_name, task_config, config, logger):
     """Extract and validate labels for *task_name* from the clean clinical table.
 
@@ -231,7 +234,7 @@ def generate_splits(labels, cv_config, logger):
     if method     == "StratifiedKFold":
         cv        = StratifiedKFold(n_splits=cv_config["n_splits"], shuffle=True, random_state=seed)
         n_splits  = cv_config["n_splits"]
-        n_repeats = 1
+        n_repeats = 1   # This option is required? If i remove it, would lead to error?
 
     elif method   == "RepeatedStratifiedKFold":
         cv        = RepeatedStratifiedKFold(n_splits=cv_config["n_splits"], n_repeats=cv_config["n_repeats"], random_state=seed)
@@ -241,7 +244,7 @@ def generate_splits(labels, cv_config, logger):
     elif method   == "StratifiedShuffleSplit":
         cv        = StratifiedShuffleSplit(n_splits=cv_config["n_splits"], test_size=cv_config["test_size"], random_state=seed)
         n_splits  = cv_config["n_splits"]
-        n_repeats = 1
+        n_repeats = 1   # This option is required? If i remove it, would lead to error?
 
     sample_ids    = labels.index.astype(str).tolist()
     y             = labels.values

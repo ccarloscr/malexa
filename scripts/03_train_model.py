@@ -280,6 +280,13 @@ def run_hyperparameter_search(estimator, param_grid, model_config,
             f"Choose one of: {sorted(SUPPORTED_INNER_CV_METHODS)}"
         )
 
+    inner_cv         = StratifiedKFold(
+            n_splits     = inner_n_splits,
+            shuffle      = True,
+            random_state = random_seed
+        )
+
+    """"
     if method == "RepeatedStratifiedKFold":
         inner_cv         = RepeatedStratifiedKFold(
             n_splits     = inner_n_splits,
@@ -298,6 +305,7 @@ def run_hyperparameter_search(estimator, param_grid, model_config,
             shuffle      = True,
             random_state = random_seed
         )
+    """
 
     logger.info(f"Inner CV: method={method}, n_splits={inner_n_splits}")
 
