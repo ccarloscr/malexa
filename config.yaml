@@ -25,6 +25,7 @@ cv:
   n_splits: 5                       # Number of stratified k-folds (required for StratifiedKFold & RepeatedStratifiedKFold)
   n_repeats: 10                     # Number of repetitions (required for RepeatedStratifiedKFold)
   test_size: 0.2                    # Proportion (float) or absolute number (int) os samples to include in test split. (StratifiedShuffleSplit only)
+  inner_n_splits: 3                 # Number of inner CV folds for hyperparameter tuning
 
 # -----------------------------------------------------------------------------
 # Pre-processing thresholds (applied in 01_load_clean_data.py)

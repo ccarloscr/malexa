@@ -2,30 +2,28 @@
 03_train_model.py
 
 Train and evaluate one (task, model, fold) combination.
+Called once per combination of task - model - fold by Snakemake rule 'train_model'.
+Everything that must NOT leak from test into training happens here, inside the fold boundary:
 
-Called once per cell of the task × model × fold grid by Snakemake rule
-`train_model`.  Everything that must NOT leak from test into training happens
-here, inside the fold boundary:
-
-  1. Restrict expression matrix to train/test sample IDs from the splits JSON.
-  2. Extract labels from the clean clinical CSV (already {0,1} or binarized
-     by 02_generate_cv_splits.py — we just look them up by sample ID).
-  3. Fold-local feature selection on training samples only:
-       a. CPM normalisation + median CPM filter  (removes unexpressed genes)
-       b. Variance percentile filter             (removes low-information genes)
-  4. log1p transform the filtered count matrix (VST-lite, avoids full DESeq2
-     dependency; appropriate for downstream linear models and trees alike).
-  5. StandardScaler fit on training samples only (required for SVM / ElasticNet;
-     harmless for tree ensembles but kept for pipeline uniformity).
-  6. Instantiate the estimator from config `estimator_class` + `fixed_params`.
-     LinearSVC is wrapped in CalibratedClassifierCV so predict_proba is
-     available for ROC-AUC / PR-AUC.
-  7. Hyperparameter search (GridSearchCV or RandomizedSearchCV) with an inner
-     3-fold stratified CV on the training fold only.
-  8. Evaluate the best estimator on the held-out test fold.
-  9. Extract feature importances (coefficients for linear models, feature
-     importances for trees) and map back to gene names.
- 10. Persist: metrics JSON, predictions CSV, feature importances CSV, model PKL.
+  1. load_fold_data
+        - Restrict expression matrix to train/test sample IDs from the splits JSON.
+        - Extract clean, binarized labels.
+  2. compute_cpm
+        - CPM normalization (per sample) on training samples only.
+  3. select_features
+        - CPM median filter on training samples only.
+        - Variance filter on training samples only.
+  4. log1p normalize
+        - log1p transform on raw counts.
+  5. build_estimator
+        - Instantiate the estimator from config (estimator_class + fixed_params).
+  6. run_hyperparameter_search
+        - Hyperparameter search (GridSearchCV or RandomizedSearchCV) with an
+        inner 3-fold stratified CV on the training fold only.
+  7. evaluate
+        - Score best pipeline on held-out test fold.
+  8. extract_importances
+        - Get feature importances and map back to gene names.
 
 Outputs (paths from Snakemake rule `train_model`):
   metrics.json            — scalar evaluation metrics for this fold
@@ -33,7 +31,7 @@ Outputs (paths from Snakemake rule `train_model`):
   feature_importances.csv — gene-level importance scores for this fold
   model.pkl               — fitted best estimator (full pipeline)
 
-Runnable as a Snakemake `script:` or standalone from the CLI.
+Runnable as a Snakemake script or standalone from the CLI.
 """
 
 import importlib
@@ -46,14 +44,17 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 from sklearn.calibration import CalibratedClassifierCV
-from sklearn.metrics import (
-    average_precision_score,
-    balanced_accuracy_score,
-    f1_score,
-    matthews_corrcoef,
-    roc_auc_score,
-)
-from sklearn.model_selection import GridSearchCV, RandomizedSearchCV, StratifiedKFold
+from sklearn.metrics import (average_precision_score, 
+                             balanced_accuracy_score,
+                             f1_score,matthews_corrcoef,
+                             roc_auc_score
+                             )
+from sklearn.model_selection import (GridSearchCV,
+                                     RandomizedSearchCV,
+                                     StratifiedKFold,
+                                     RepeatedStratifiedKFold,
+                                     StratifiedShuffleSplit
+                                     )
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
@@ -83,14 +84,15 @@ def get_logger(log_path=None):
 # --------------------------------------------------------------------------- #
 # data loading
 # --------------------------------------------------------------------------- #
-def load_fold_data(expression_path, clinical_path, splits_path,
+def load_fold_data(expression_path, splits_path,
                    task_name, task_config, fold_idx, logger):
-    """Return X_train, X_test, y_train, y_test as aligned DataFrames/Series.
-
-    Labels come from the clean clinical CSV (sample IDs as index).  The splits
-    JSON already contains only samples that had a valid label (unknowns were
-    dropped by 02_generate_cv_splits.py), so no label filtering is needed here.
     """
+    Return X_train, X_test, y_train, y_test as aligned dataframes.
+    Labels come from the clean clinical CSV (sample IDs as index). All JSON splits
+    contain samples with a valid label (required in 02_generate_cv_splits.py), so
+    not necessary to filter labels in this script.
+    """
+
     # --- splits ---
     with open(splits_path) as f:
         splits = json.load(f)
@@ -102,23 +104,16 @@ def load_fold_data(expression_path, clinical_path, splits_path,
         f"Fold {fold_idx}: {len(train_ids)} train / {len(test_ids)} test samples."
     )
 
-    # --- expression: load only needed columns (memory efficient) ---
-    # Read header first to know which columns to pull
-    header = pd.read_csv(expression_path, index_col=0, nrows=0).columns.tolist()
-    needed = sorted(set(train_ids + test_ids) & set(header))
+    # --- expression: load only needed columns ---
+    all_cols       = pd.read_csv(expression_path, nrows=0).columns.tolist()
+    index_col_name = all_cols[0]   # first column is the gene index
+    needed         = set(train_ids + test_ids)
+    cols_to_load   = [index_col_name] + [c for c in all_cols[1:] if c in needed]
+    counts         = pd.read_csv(expression_path, usecols=cols_to_load, index_col=0)    
 
-    counts = pd.read_csv(expression_path, index_col=0, usecols=[""] + needed
-                         if "" in pd.read_csv(expression_path, nrows=0).columns
-                         else None)
-    # Fallback: read everything if the trick above fails (index col name varies)
-    try:
-        counts = pd.read_csv(expression_path, index_col=0, usecols=lambda c: c == c or c in needed)
-    except Exception:
-        counts = pd.read_csv(expression_path, index_col=0)
-
-    # Keep only the fold samples, in split order
-    train_missing = [s for s in train_ids if s not in counts.columns]
-    test_missing  = [s for s in test_ids  if s not in counts.columns]
+    # keep only the fold samples, in split order
+    train_missing  = [s for s in train_ids if s not in counts.columns]
+    test_missing   = [s for s in test_ids  if s not in counts.columns]
     if train_missing or test_missing:
         raise ValueError(
             f"Fold {fold_idx}: {len(train_missing)} train / {len(test_missing)} "
@@ -126,15 +121,19 @@ def load_fold_data(expression_path, clinical_path, splits_path,
             f"First few missing: {(train_missing + test_missing)[:5]}"
         )
 
-    # genes × samples -> transpose to samples × genes for sklearn
-    X_train = counts[train_ids].T
-    X_test  = counts[test_ids].T
+    # genes × samples -> transpose to samples × genes
+    X_train        = counts[train_ids].T
+    X_test         = counts[test_ids].T
 
-    # --- labels ---
-    clinical = pd.read_csv(clinical_path, index_col=0)
-    label_col = task_config["label_col"]
-    y_train = clinical.loc[train_ids, label_col].astype(int)
-    y_test  = clinical.loc[test_ids,  label_col].astype(int)
+    # --- clinical labels (pre-binarized) ---
+    labels_map = splits.get("labels")
+    if labels_map is None:
+        raise ValueError(
+            "Splits JSON is missing the 'labels' field. Please re-run 02_generate_cv_splits.py "
+        )
+
+    y_train = pd.Series({sid: labels_map[sid] for sid in train_ids}, name=task_config["label_col"]).astype(int)
+    y_test  = pd.Series({sid: labels_map[sid] for sid in test_ids},  name=task_config["label_col"]).astype(int)
 
     logger.info(
         f"Train class counts: {y_train.value_counts().to_dict()}  |  "
@@ -251,12 +250,13 @@ def build_estimator(model_name, model_config, random_seed, logger):
 # hyperparameter search
 # --------------------------------------------------------------------------- #
 def run_hyperparameter_search(estimator, param_grid, model_config,
-                               X_train_arr, y_train, random_seed, n_threads, logger):
-    """Wrap estimator in a Pipeline + scaler, run CV search on training fold.
-
+                               X_train_arr, y_train, random_seed, n_threads, logger,
+                               cv_config=None):
+    
+    """
+    Wrap estimator in a Pipeline + scaler, run CV search on training fold.
     The scaler is inside the pipeline so it is re-fit on each inner fold,
     preventing any leakage from inner-fold validation samples.
-
     Returns the fitted SearchCV object.
     """
     pipeline = Pipeline([
@@ -266,11 +266,43 @@ def run_hyperparameter_search(estimator, param_grid, model_config,
 
     strategy   = model_config.get("search_strategy", "grid")
     scoring    = model_config.get("scoring", "roc_auc")
-    inner_cv   = StratifiedKFold(n_splits=3, shuffle=True, random_state=random_seed)
+
+    cv_config       = cv_config or {}
+    method          = cv_config.get("method")
+    inner_n_splits  = cv_config.get("inner_n_splits")
+    n_repeats       = cv_config.get("n_repeats")
+    test_size       = cv_config.get("test_size")
+
+    SUPPORTED_INNER_CV_METHODS = {"StratifiedKFold", "RepeatedStratifiedKFold", "StratifiedShuffleSplit"}
+    if method not in SUPPORTED_INNER_CV_METHODS:
+        raise ValueError(
+            f"Unsupported inner CV method '{method}'. "
+            f"Choose one of: {sorted(SUPPORTED_INNER_CV_METHODS)}"
+        )
+
+    if method == "RepeatedStratifiedKFold":
+        inner_cv         = RepeatedStratifiedKFold(
+            n_splits     = inner_n_splits,
+            n_repeats    = n_repeats,
+            random_state = random_seed
+        )
+    elif method == "StratifiedShuffleSplit":
+        inner_cv         = StratifiedShuffleSplit(
+            n_splits     = inner_n_splits,
+            test_size    = test_size,
+            random_state = random_seed
+        )
+    elif method == "StratifiedKFold":
+        inner_cv         = StratifiedKFold(
+            n_splits     = inner_n_splits,
+            shuffle      = True,
+            random_state = random_seed
+        )
+
+    logger.info(f"Inner CV: method={method}, n_splits={inner_n_splits}")
 
     common_kwargs = dict(
         estimator=pipeline,
-        param_grid=param_grid,
         scoring=scoring,
         cv=inner_cv,
         refit=True,
@@ -282,18 +314,22 @@ def run_hyperparameter_search(estimator, param_grid, model_config,
         n_iter = model_config.get("n_iter", 20)
         logger.info(
             f"RandomizedSearchCV: n_iter={n_iter}, scoring={scoring}, "
-            f"inner_cv={inner_cv.n_splits}-fold"
+            f"inner_cv={inner_n_splits}-fold"
         )
         search = RandomizedSearchCV(
             **common_kwargs,
+            param_distributions=param_grid,
             n_iter=n_iter,
             random_state=random_seed,
         )
     else:
         logger.info(
-            f"GridSearchCV: scoring={scoring}, inner_cv={inner_cv.n_splits}-fold"
+            f"GridSearchCV: scoring={scoring}, inner_cv={inner_n_splits}-fold"
         )
-        search = GridSearchCV(**common_kwargs)
+        search = GridSearchCV(
+            **common_kwargs,
+            param_grid=param_grid
+        )
 
     search.fit(X_train_arr, y_train.values)
     logger.info(f"Best params : {search.best_params_}")
@@ -425,7 +461,7 @@ def extract_importances(best_pipeline, selected_genes, model_name, logger):
 # --------------------------------------------------------------------------- #
 # main
 # --------------------------------------------------------------------------- #
-def main(expression_path, clinical_path, splits_path,
+def main(expression_path, splits_path,
          task_name, model_name, fold_idx,
          config,
          out_metrics, out_predictions, out_importances, out_model_pkl,
@@ -449,7 +485,7 @@ def main(expression_path, clinical_path, splits_path,
     # 1. Load fold data
     # ------------------------------------------------------------------ #
     X_train, X_test, y_train, y_test = load_fold_data(
-        expression_path, clinical_path, splits_path,
+        expression_path, splits_path,
         task_name, task_config, fold_idx, logger
     )
 
@@ -489,7 +525,8 @@ def main(expression_path, clinical_path, splits_path,
 
     search = run_hyperparameter_search(
         estimator, param_grid, model_config,
-        X_train_arr, y_train, random_seed, n_threads, logger
+        X_train_arr, y_train, random_seed, n_threads, logger,
+        cv_config=config["cv"]
     )
 
     best_pipeline = search.best_estimator_
@@ -567,7 +604,6 @@ if __name__ == "__main__":
     if "snakemake" in globals():
         main(
             expression_path=snakemake.input.expression,
-            clinical_path=snakemake.input.clinical,
             splits_path=snakemake.input.splits,
             task_name=snakemake.params.task,
             model_name=snakemake.params.model,
@@ -586,7 +622,6 @@ if __name__ == "__main__":
 
         parser = argparse.ArgumentParser(description=__doc__)
         parser.add_argument("--expression",   required=True)
-        parser.add_argument("--clinical",     required=True)
         parser.add_argument("--splits",       required=True)
         parser.add_argument("--task",         required=True)
         parser.add_argument("--model",        required=True)
@@ -605,7 +640,6 @@ if __name__ == "__main__":
 
         main(
             expression_path=args.expression,
-            clinical_path=args.clinical,
             splits_path=args.splits,
             task_name=args.task,
             model_name=args.model,
@@ -618,3 +652,5 @@ if __name__ == "__main__":
             log_path=args.log,
             n_threads=args.threads,
         )
+
+

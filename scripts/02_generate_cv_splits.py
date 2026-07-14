@@ -319,7 +319,8 @@ def main(expression_path, clinical_path, task_name, config,
         "random_seed":   cv_config.get("random_seed", 123),
         "label_counts":  label_counts,
         "samples_dropped_unknown_label": dropped_samples,
-        "folds":         folds,
+        "labels":        {str(k): int(v) for k, v in labels.items()},
+        "folds":         folds
     }
 
     Path(out_splits).parent.mkdir(parents=True, exist_ok=True)
