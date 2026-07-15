@@ -20,3 +20,6 @@ data/
 # Python cache
 __pycache__/
 *.pyc
+
+# Old dataset
+gdc-ml/
