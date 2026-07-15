@@ -1,4 +1,7 @@
 # MALEXA
+
+### Project In-development
+
 ## MAchine Learning EXpression-based Algorithms
 
 MALEXA uses RNA-seq raw expression data to predict cancer stage and somatic mutational status. It is built on Python and is designed to run via Snakemake locally, on an HPC cluster (SLURM), or on AWS.
