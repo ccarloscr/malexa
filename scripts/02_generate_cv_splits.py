@@ -125,7 +125,7 @@ def binarize_stage(series, stage_map, logger):
 
 
 # --------------------------------------------------------------------------- #
-# NAME HERE???
+# label extraction
 # --------------------------------------------------------------------------- #
 def extract_labels(clinical, task_name, task_config, config, logger):
     """Extract and validate labels for *task_name* from the clean clinical table.
@@ -151,8 +151,9 @@ def extract_labels(clinical, task_name, task_config, config, logger):
     # task-specific label preparation
     # ------------------------------------------------------------------ #
     stage_col = config.get("clinical_columns", {}).get("stage", "cancer_stage")
+    is_stage_task = (label_col == stage_col) or (task_name == "cancer_stage")
 
-    if label_col == stage_col:
+    if is_stage_task:
         # cancer stage task: free-text -> binary
         stage_map = config.get("stage_binarization", {})
         if not stage_map:
@@ -175,6 +176,7 @@ def extract_labels(clinical, task_name, task_config, config, logger):
                 f"dropping."
             )
             labels[bad_mask] = np.nan
+
 
     # ------------------------------------------------------------------ #
     # drop unknowns, cast to int
@@ -234,7 +236,7 @@ def generate_splits(labels, cv_config, logger):
     if method     == "StratifiedKFold":
         cv        = StratifiedKFold(n_splits=cv_config["n_splits"], shuffle=True, random_state=seed)
         n_splits  = cv_config["n_splits"]
-        n_repeats = 1   # This option is required? If i remove it, would lead to error?
+        n_repeats = 1
 
     elif method   == "RepeatedStratifiedKFold":
         cv        = RepeatedStratifiedKFold(n_splits=cv_config["n_splits"], n_repeats=cv_config["n_repeats"], random_state=seed)
@@ -244,7 +246,7 @@ def generate_splits(labels, cv_config, logger):
     elif method   == "StratifiedShuffleSplit":
         cv        = StratifiedShuffleSplit(n_splits=cv_config["n_splits"], test_size=cv_config["test_size"], random_state=seed)
         n_splits  = cv_config["n_splits"]
-        n_repeats = 1   # This option is required? If i remove it, would lead to error?
+        n_repeats = 1
 
     sample_ids    = labels.index.astype(str).tolist()
     y             = labels.values
@@ -266,7 +268,13 @@ def generate_splits(labels, cv_config, logger):
             f"test={len(test_ids)} {test_counts}"
         )
 
-        folds.append({"repeat": repeat, "fold": fold, "train": train_ids, "test": test_ids})
+        folds.append({
+            "split_idx": idx,
+            "repeat": repeat,
+            "fold": fold,
+            "train": train_ids,
+            "test": test_ids
+        })
 
     return folds, n_splits, n_repeats
 
@@ -336,12 +344,11 @@ def main(expression_path, clinical_path, task_name, config,
 # --------------------------------------------------------------------------- #
 # entry points
 # --------------------------------------------------------------------------- #
-#
 if __name__ == "__main__":
 
-    # Snakemake entry point
-    # config.yaml loaded by default
-    # Any config.yaml parameter can be overriden via CLI (--config key=value)
+    # =========================================================================
+    # EXECUTION MODE 1: Snakemake Integration
+    # =========================================================================
     if "snakemake" in globals():
         main(
             expression_path  = snakemake.input.expression,
@@ -352,44 +359,57 @@ if __name__ == "__main__":
             log_path         = snakemake.log[0] if len(snakemake.log) else None,
         )
 
-    # Standalone entry point (Snakemake-independent)  
-    # config.yaml must be provided via --config
-    # cv.method can be overridden via --cv-method 
+    # =========================================================================
+    # EXECUTION MODE 2: Standalone CLI
+    # Parameter definition: CLI Arguments (Priority 1) > config.yaml (Priority 2)
+    # =========================================================================  
     else:
         import argparse
         import yaml
 
-        # --- argument definitions ---
-        # paths and task are required: --cv-method
+        # --- Parse CLI Arguments ---
         parser = argparse.ArgumentParser(description=__doc__)
-        parser.add_argument("--expression", required=True, help="Path to clean expression CSV (output of script 01)")
-        parser.add_argument("--clinical",   required=True, help="Path to clean clinical CSV (output of script 01)")
-        parser.add_argument("--task",       required=True, help="Task name as defined in config.yaml (e.g. cancer_stage)")
-        parser.add_argument("--config",     required=True, help="Path to config.yaml")
-        parser.add_argument("--out-splits", required=True, help="Output path for the splits JSON file")  
-        parser.add_argument("--log",        default=None)
-        # Added CLI option (--cv-method) to parse the CV method independently from the config.yaml
-        parser.add_argument("--cv-method",  default=None,
-                            choices=["StratifiedKFold", "RepeatedStratifiedKFold", "StratifiedShuffleSplit"],
-                            help="Override cv.method from config.yaml")
+
+        # Mandatory arguments
+        parser.add_argument("--task",       required=True,  help="Task name as defined in config.yaml (e.g. cancer_stage)")
+        parser.add_argument("--config",     required=True,  help="Path to config.yaml")
+
+        # Optional arguments (if not defined --> resolved by the config.yaml)
+        parser.add_argument("--expression", required=False, help="Path to clean expression CSV")
+        parser.add_argument("--clinical",   required=False, help="Path to clean clinical CSV")
+        parser.add_argument("--out-splits", required=False, help="Output path for the splits JSON file")  
+        parser.add_argument("--log",        default=None,   help="Path to log file")
+        parser.add_argument("--cv-method",  default=None,   help="Override cv.method from config.yaml",
+                            choices=["StratifiedKFold", "RepeatedStratifiedKFold", "StratifiedShuffleSplit"]
+                            )
         args = parser.parse_args()
 
-        # --- load and optionally patch config ---
-
-        # reads config.yaml into a dict
+        # --- Load Base Configuration File ---
         with open(args.config) as f:
             cfg = yaml.safe_load(f)
 
-        # --cv-method patches cv.method if provided
+        # Patch cv.method if provided via CLI
         if args.cv_method:
             cfg["cv"]["method"] = args.cv_method
 
+        # --- Resolve Output Directory and Steps Config ---
+        out_dir = cfg["data"].get("output_dir", "results")
+        step01_cfg = cfg["outputs"]["step_01"]
+        step02_cfg = cfg["outputs"]["step_02"]
+
+        # --- Resolve Input Paths (Outputs from Step 01) ---
+        expression_path = args.expression or step01_cfg["expression"].format(output_dir=out_dir)
+        clinical_path   = args.clinical or step01_cfg["clinical"].format(output_dir=out_dir)
+
+        # --- Resolve Output Path ---
+        out_splits = args.out_splits or step02_cfg["splits"].format(output_dir=out_dir, task=args.task)
+
         # Run
         main(
-            expression_path  = args.expression,
-            clinical_path    = args.clinical,
+            expression_path  = expression_path,
+            clinical_path    = clinical_path,
             task_name        = args.task,
             config           = cfg,
-            out_splits       = args.out_splits,
+            out_splits       = out_splits,
             log_path         = args.log,
         )

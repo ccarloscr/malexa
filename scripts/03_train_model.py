@@ -84,9 +84,14 @@ def get_logger(log_path=None):
 # --------------------------------------------------------------------------- #
 # data loading
 # --------------------------------------------------------------------------- #
-def load_fold_data(expression_path, splits_path,
-                   task_name, task_config, fold_idx, logger):
+def load_fold_data(expression_path, splits_path, task_name,
+                   task_config, fold_idx, logger):
     """
+    
+
+    Reads train/test sample_ids from JSON splits for each fold.
+    Verifies split_idx matches the requested fold_idx.
+
     Return X_train, X_test, y_train, y_test as aligned dataframes.
     Labels come from the clean clinical CSV (sample IDs as index). All JSON splits
     contain samples with a valid label (required in 02_generate_cv_splits.py), so
@@ -98,6 +103,15 @@ def load_fold_data(expression_path, splits_path,
         splits = json.load(f)
 
     fold_data = splits["folds"][fold_idx]
+
+    # split_idx in JSON must match the requested fold_idx
+    if fold_data.get("split_idx") is not None and fold_data["split_idx"] != fold_idx:
+        raise ValueError(
+            f"Mismatch: requested fold_idx={fold_idx} but splits JSON entry "
+            f"at position {fold_idx} has split_idx={fold_data['split_idx']}. "
+            f"The splits JSON may have been reordered or truncated."
+        )
+
     train_ids = fold_data["train"]
     test_ids  = fold_data["test"]
     logger.info(
@@ -145,18 +159,22 @@ def load_fold_data(expression_path, splits_path,
 # --------------------------------------------------------------------------- #
 # fold-local feature selection (leakage-safe)
 # --------------------------------------------------------------------------- #
+
 def compute_cpm(counts_df):
-    """Counts per million, column-wise (counts_df: samples × genes)."""
-    lib_sizes = counts_df.sum(axis=1)          # total counts per sample
-    # avoid division by zero for pathological samples
-    lib_sizes = lib_sizes.replace(0, np.nan)
-    cpm = counts_df.div(lib_sizes, axis=0) * 1e6
+    """ Calculates CPM per sample from the raw counts expression matrix
+
+    Computes counts per million (CPMs), column-wise (counts_df: samples × genes).
+    Returns the normalized CPM matrix.
+    """
+    lib_sizes = counts_df.sum(axis=1)             # total counts per sample
+    lib_sizes = lib_sizes.replace(0, np.nan)      # prevents error on empty samples
+    cpm = counts_df.div(lib_sizes, axis=0) * 1e6  # compute CPMs
     return cpm
 
 
 def select_features(X_train, X_test, fs_config, logger):
-    """Apply CPM + variance filters fit exclusively on X_train.
-
+    """Applies the expression and variance filters on the train set.
+    
     Parameters
     ----------
     X_train, X_test : pd.DataFrame, samples × genes
@@ -168,9 +186,10 @@ def select_features(X_train, X_test, fs_config, logger):
         Filtered, with same gene columns.
     selected_genes : list[str]
     """
-    min_cpm       = fs_config.get("min_cpm",          1.0)
-    min_var_pct   = fs_config.get("min_variance_pct", 10)
 
+    # --- Define parameters ---
+    min_cpm       = fs_config.get("min_cpm", 1.0)
+    min_var_pct   = fs_config.get("min_variance_pct", 10)
     n_genes_start = X_train.shape[1]
 
     # --- CPM filter: median CPM >= min_cpm across training samples ---
@@ -188,12 +207,13 @@ def select_features(X_train, X_test, fs_config, logger):
     if X_train.shape[1] == 0:
         logger.warning("No genes survived CPM filter. Skipping variance filter.")
         return X_train, X_test, []
-
+    
     train_var = X_train.var(axis=0)
     var_threshold = np.percentile(train_var.values, min_var_pct)
-    var_mask = train_var >= var_threshold
-    X_train = X_train.loc[:, var_mask]
-    X_test  = X_test.loc[:,  var_mask]
+    var_mask = train_var >= var_threshold # Mask defined by the variance on the training set
+    
+    X_train = X_train.loc[:, var_mask]    # Filter from training set applied on train set
+    X_test  = X_test.loc[:,  var_mask]    # Filter from training set applied on test set
     logger.info(
         f"Variance filter (bottom {min_var_pct}% removed): "
         f"{var_mask.sum()} / {cpm_mask.sum()} genes retained."
@@ -201,16 +221,17 @@ def select_features(X_train, X_test, fs_config, logger):
 
     selected_genes = X_train.columns.tolist()
     logger.info(f"Feature selection: {len(selected_genes)} genes selected for modelling.")
+    
     return X_train, X_test, selected_genes
 
 
 # --------------------------------------------------------------------------- #
-# normalisation
+# normalisation (log1p: logarithm of 1 plus)
 # --------------------------------------------------------------------------- #
 def log1p_normalise(X_train, X_test):
-    """log1p on raw counts (applied after feature selection).
-
-    Fit nothing on test data — log1p is a fixed transformation, no leakage.
+    """
+    log1p transformation on raw counts.
+    Applied after feature selection (filtered by CPM and Variance) to avoid leakage.
     """
     return np.log1p(X_train.values), np.log1p(X_test.values)
 

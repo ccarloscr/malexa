@@ -65,8 +65,26 @@ def load_counts(path):
         counts = pd.read_parquet(path)
     else:
         counts = pd.read_csv(path, index_col=0)
+
+    # Index must be gene indentifiers (strings), if the index is a default RangeIndex
+    # it means index_col=0 got a data column instead of the intended gene ID column
+    if isinstance(counts.index, pd.RangeIndex):
+        raise ValueError(
+            f"Counts matrix loaded from '{path}' has a numeric RangeIndex. "
+            f"Expected gene identifiers as the row index. "
+            f"Check that the first column of the file contains gene IDs."
+        )
+
     if counts.index.duplicated().any():
+        n_dupes = int(counts.index.duplicated().sum())
         counts = counts.groupby(counts.index).sum()
+        # Non-numeric columns are dropped by groupby().sum()
+        # Dropped columns are logged for convenience
+        import logging
+        logging.getLogger("load_clean_data").info(
+            f"load_counts: {n_dupes} duplicate gene IDs detected and summed."
+        )
+
     return counts
 
 
@@ -126,6 +144,7 @@ def clean_expression_missing(counts, max_gene_missing_frac, max_sample_missing_f
 
     sample_missing_frac = counts.isna().mean(axis=0)
     keep_samples = sample_missing_frac <= max_sample_missing_frac
+    dropped_sample_ids = sorted(counts.columns[~keep_samples].tolist())
     n_dropped_samples = int((~keep_samples).sum())
     if n_dropped_samples:
         logger.info(
@@ -141,7 +160,8 @@ def clean_expression_missing(counts, max_gene_missing_frac, max_sample_missing_f
 
     # raw counts should be non-negative integers
     counts = counts.clip(lower=0).round().astype(int)
-    return counts
+
+    return counts, dropped_sample_ids
 
 
 # --------------------------------------------------------------------------- #
@@ -227,7 +247,8 @@ def main(counts_path, clinical_path, sample_id_col, config,
 
     max_gene_missing_frac = config["preprocessing"].get("max_gene_missing_frac", 0.2)
     max_sample_missing_frac = config["preprocessing"].get("max_sample_missing_frac", 0.2)
-    counts_clean = clean_expression_missing(
+    
+    counts_clean, dropped_samples_missing = clean_expression_missing(
         counts, max_gene_missing_frac, max_sample_missing_frac, logger
     )
 
@@ -247,6 +268,7 @@ def main(counts_path, clinical_path, sample_id_col, config,
         "n_samples_output": int(counts_clean.shape[1]),
         "samples_dropped_no_clinical_match": dropped_counts_only,
         "samples_dropped_no_expression_match": dropped_clinical_only,
+        "samples_dropped_excessive_missing": dropped_samples_missing,
         "max_gene_missing_frac_threshold": max_gene_missing_frac,
         "max_sample_missing_frac_threshold": max_sample_missing_frac,
     }
@@ -262,6 +284,10 @@ def main(counts_path, clinical_path, sample_id_col, config,
 
 
 if __name__ == "__main__":
+
+    # =========================================================================
+    # EXECUTION MODE 1: Snakemake Integration
+    # =========================================================================
     if "snakemake" in globals():
         main(
             counts_path=snakemake.input.counts,
@@ -273,30 +299,50 @@ if __name__ == "__main__":
             out_qc=snakemake.output.qc_report,
             log_path=snakemake.log[0] if len(snakemake.log) else None,
         )
+
+    # =========================================================================
+    # EXECUTION MODE 2: Standalone CLI
+    # Parameter definition: CLI Arguments (Priority 1) > config.yaml (Priority 2)
+    # =========================================================================  
     else:
         import argparse
         import yaml
 
+        # --- Parse CLI Arguments ---
         parser = argparse.ArgumentParser(description=__doc__)
-        parser.add_argument("--counts", required=True, help="path to raw counts CSV")
-        parser.add_argument("--clinical", required=True, help="path to raw clinical CSV")
+        parser.add_argument("--counts", required=False, help="path to raw counts CSV")
+        parser.add_argument("--clinical", required=False, help="path to raw clinical CSV")
         parser.add_argument("--config", required=True, help="path to config.yaml")
-        parser.add_argument("--out-expression", required=True)
-        parser.add_argument("--out-clinical", required=True)
-        parser.add_argument("--out-qc", required=True)
+        parser.add_argument("--out-expression", required=False)
+        parser.add_argument("--out-clinical", required=False)
+        parser.add_argument("--out-qc", required=False)
         parser.add_argument("--log", default=None)
         args = parser.parse_args()
 
+        # --- Load Base Configuration File ---
         with open(args.config) as f:
             cfg = yaml.safe_load(f)
 
+        # --- Resolve Input Paths (CLI Override > YAML Config) ---
+        counts_path = args.counts or cfg["data"]["counts_file"]
+        clinical_path = args.clinical or cfg["data"]["clinical_file"]
+
+        # --- Resolve Output Paths (CLI Override > YAML Config) ---
+        out_dir = cfg["data"].get("output_dir", "results")
+        step01_cfg = cfg["outputs"]["step_01"]
+
+        out_expression = args.out_expression or step01_cfg["expression"].format(output_dir=out_dir)
+        out_clinical = args.out_clinical or step01_cfg["clinical"].format(output_dir=out_dir)
+        out_qc = args.out_qc or step01_cfg["qc_report"].format(output_dir=out_dir)
+
+
         main(
-            counts_path=args.counts,
-            clinical_path=args.clinical,
+            counts_path=counts_path,
+            clinical_path=clinical_path,
             sample_id_col=cfg["data"]["sample_id_col"],
             config=cfg,
-            out_expression=args.out_expression,
-            out_clinical=args.out_clinical,
-            out_qc=args.out_qc,
+            out_expression=out_expression,
+            out_clinical=out_clinical,
+            out_qc=out_qc,
             log_path=args.log,
         )
