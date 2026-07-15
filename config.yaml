@@ -50,13 +50,15 @@ clinical_columns:
 # Cross-validation
 # -----------------------------------------------------------------------------
 cv:
-  method: RepeatedStratifiedKFold   # Supported: StratifiedKFold, RepeatedStratifiedKFold, StratifiedShuffleSplit
+  method: RepeatedStratifiedKFold   # Outter CV method: StratifiedKFold, RepeatedStratifiedKFold, StratifiedShuffleSplit
   random_seed: 123                  # Fixed seed for reproducibility across tasks and models
   n_splits: 5                       # Number of stratified k-folds (required for StratifiedKFold & RepeatedStratifiedKFold)
   n_repeats: 10                     # Number of repetitions (required for RepeatedStratifiedKFold)
   test_size: 0.2                    # Proportion (float) or absolute number (int) os samples to include in test split. (StratifiedShuffleSplit only)
   inner_n_splits: 3                 # Number of inner CV folds for hyperparameter tuning
-
+  inner_method: StratifiedKFold     # Inner CV method (for hyperparameter search)
+  inner_n_repeats: 2                # Only if inner_method = RepeatedStratifiedKFold
+  inner_test_size: 0.2              # Only if inner_method = StratifiedShuffleSplit
 
 # -----------------------------------------------------------------------------
 # Stage binarization
@@ -104,6 +106,7 @@ tasks:
       - random_forest
       - xgboost
     pos_label: 1                        # 1 = Late stage
+    exclude_genes: []
 
   EGFR_mutation:
     label_col: "EGFR_mutation_status"  # already {0,1} after 01_load_clean_data.py
@@ -111,6 +114,8 @@ tasks:
       - linear_svm
       - elasticnet_logreg
     pos_label: 1                        # 1 = Mutant
+    exclude_genes:
+    - "ENSG00000146648.15"              # EGFR gene_id
 
   KRAS_mutation:
     label_col: "KRAS_mutation_status"
@@ -118,6 +123,8 @@ tasks:
       - linear_svm
       - elasticnet_logreg
     pos_label: 1                        # 1 = Mutant
+    exclude_genes:
+      - "ENSG00000133703.13"            # KRAS gene_id
 
 
 # -----------------------------------------------------------------------------

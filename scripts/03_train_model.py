@@ -44,6 +44,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 from sklearn.calibration import CalibratedClassifierCV
+from sklearn.svm import LinearSVC
 from sklearn.metrics import (average_precision_score, 
                              balanced_accuracy_score,
                              f1_score,matthews_corrcoef,
@@ -86,13 +87,8 @@ def get_logger(log_path=None):
 # --------------------------------------------------------------------------- #
 def load_fold_data(expression_path, splits_path, task_name,
                    task_config, fold_idx, logger):
-    """
-    
-
-    Reads train/test sample_ids from JSON splits for each fold.
-    Verifies split_idx matches the requested fold_idx.
-
-    Return X_train, X_test, y_train, y_test as aligned dataframes.
+    """Return X_train, X_test, y_train, y_test as aligned dataframes
+  
     Labels come from the clean clinical CSV (sample IDs as index). All JSON splits
     contain samples with a valid label (required in 02_generate_cv_splits.py), so
     not necessary to filter labels in this script.
@@ -102,14 +98,20 @@ def load_fold_data(expression_path, splits_path, task_name,
     with open(splits_path) as f:
         splits = json.load(f)
 
-    fold_data = splits["folds"][fold_idx]
+    folds = splits["folds"]
 
-    # split_idx in JSON must match the requested fold_idx
-    if fold_data.get("split_idx") is not None and fold_data["split_idx"] != fold_idx:
+    # Look up the fold by its explicit split_idx field rather than list position
+    matches = [f for f in folds if f.get("split_idx") == fold_idx]
+    if matches:
+        fold_data = matches[0]
+    elif 0 <= fold_idx < len(folds) and folds[fold_idx].get("split_idx") is None:
+        fold_data = folds[fold_idx]
+    else:
         raise ValueError(
-            f"Mismatch: requested fold_idx={fold_idx} but splits JSON entry "
-            f"at position {fold_idx} has split_idx={fold_data['split_idx']}. "
-            f"The splits JSON may have been reordered or truncated."
+            f"Could not find fold_idx={fold_idx} in splits JSON "
+            f"'{splits_path}' ({len(folds)} folds available). The splits "
+            f"file may be stale, reordered, or generated for a different "
+            f"cv configuration."
         )
 
     train_ids = fold_data["train"]
@@ -157,6 +159,42 @@ def load_fold_data(expression_path, splits_path, task_name,
 
 
 # --------------------------------------------------------------------------- #
+# manual gene exclusion (e.g. driver genes that would  dominate feature
+# importance for a mutation-status)
+# --------------------------------------------------------------------------- #
+def exclude_configured_genes(X_train, X_test, exclude_genes, logger):
+    """Drop genes listed in task_config['exclude_genes'] before feature selection
+
+    This runs BEFORE the CPM/variance filters and BEFORE log1p, so excluded
+    genes never enter feature selection and can never be reported in
+    feature_importances.csv. Applied identically to train and test.
+    """
+    if not exclude_genes:
+        return X_train, X_test
+
+    present = [g for g in exclude_genes if g in X_train.columns]
+    missing = [g for g in exclude_genes if g not in X_train.columns]
+
+    if present:
+        logger.info(
+            f"Excluding {len(present)} configured gene(s) before feature "
+            f"selection: {present}"
+        )
+        X_train = X_train.drop(columns=present)
+        X_test = X_test.drop(columns=present)
+
+    if missing:
+        # Warning if exluded_genes is not empty but it is not found in the
+        # expression matrix
+        logger.warning(
+            f"exclude_genes configured but not found in expression matrix "
+            f"(check ID format, e.g. version suffix): {missing}"
+        )
+
+    return X_train, X_test
+
+
+# --------------------------------------------------------------------------- #
 # fold-local feature selection (leakage-safe)
 # --------------------------------------------------------------------------- #
 
@@ -173,18 +211,7 @@ def compute_cpm(counts_df):
 
 
 def select_features(X_train, X_test, fs_config, logger):
-    """Applies the expression and variance filters on the train set.
-    
-    Parameters
-    ----------
-    X_train, X_test : pd.DataFrame, samples × genes
-    fs_config : dict  (config['feature_selection'])
-
-    Returns
-    -------
-    X_train_sel, X_test_sel : pd.DataFrame
-        Filtered, with same gene columns.
-    selected_genes : list[str]
+    """Applies the expression and variance filters exclusively on the train set
     """
 
     # --- Define parameters ---
@@ -226,11 +253,11 @@ def select_features(X_train, X_test, fs_config, logger):
 
 
 # --------------------------------------------------------------------------- #
-# normalisation (log1p: logarithm of 1 plus)
+# normalization (log1p: logarithm of 1 plus)
 # --------------------------------------------------------------------------- #
 def log1p_normalise(X_train, X_test):
-    """
-    log1p transformation on raw counts.
+    """log1p transformation on raw counts
+
     Applied after feature selection (filtered by CPM and Variance) to avoid leakage.
     """
     return np.log1p(X_train.values), np.log1p(X_test.values)
@@ -239,8 +266,12 @@ def log1p_normalise(X_train, X_test):
 # --------------------------------------------------------------------------- #
 # estimator construction
 # --------------------------------------------------------------------------- #
-def build_estimator(model_name, model_config, random_seed, logger):
+def build_estimator(model_name, model_config, random_seed, logger, inner_n_splits=None):
     """Instantiate the estimator from config, wrapping LinearSVC if needed.
+
+    inner_n_splits, if given, drives the number of CV folds used internally
+    by CalibratedClassifierCV (kept in sync with the same inner CV used for
+    hyperparameter search).
 
     Returns the base estimator (before Pipeline wrapping).
     """
@@ -250,19 +281,31 @@ def build_estimator(model_name, model_config, random_seed, logger):
 
     fixed_params = model_config.get("fixed_params", {}) or {}
     # Propagate random_seed from config if the estimator accepts random_state
-    # and it wasn't already overridden in fixed_params
     import inspect
     sig = inspect.signature(EstimatorClass.__init__)
     if "random_state" in sig.parameters and "random_state" not in fixed_params:
         fixed_params = {**fixed_params, "random_state": random_seed}
 
+    # If estimator requests n_jobs>1 --> force n_jobs=1 to avoid CPU oversubscription
+    # since the outer search already parallelizes across CV folds via n_jobs=n_threads
+    if "n_jobs" in sig.parameters and fixed_params.get("n_jobs", 1) != 1:
+        logger.info(
+            f"Overriding fixed_params n_jobs={fixed_params['n_jobs']} -> 1 "
+            f"for {class_name}; parallelism is controlled by the search's "
+            f"n_jobs (n_threads) instead, to avoid CPU oversubscription."
+        )
+        fixed_params = {**fixed_params, "n_jobs": 1}
+
     estimator = EstimatorClass(**fixed_params)
     logger.info(f"Instantiated {class_name} with fixed_params={fixed_params}")
 
     # LinearSVC doesn't implement predict_proba; wrap for probability calibration
-    if class_name == "LinearSVC":
-        estimator = CalibratedClassifierCV(estimator, cv=3, method="sigmoid")
-        logger.info("Wrapped LinearSVC in CalibratedClassifierCV (sigmoid).")
+    if isinstance(estimator, LinearSVC):
+        calibration_cv = inner_n_splits or 3
+        estimator = CalibratedClassifierCV(estimator, cv=calibration_cv, method="sigmoid")
+        logger.info(
+            f"Wrapped LinearSVC in CalibratedClassifierCV (sigmoid, cv={calibration_cv})."
+        )
 
     return estimator
 
@@ -274,12 +317,17 @@ def run_hyperparameter_search(estimator, param_grid, model_config,
                                X_train_arr, y_train, random_seed, n_threads, logger,
                                cv_config=None):
     
-    """
-    Wrap estimator in a Pipeline + scaler, run CV search on training fold.
+    """Wrap estimator in a Pipeline + scaler, run CV search on training fold.
+
     The scaler is inside the pipeline so it is re-fit on each inner fold,
     preventing any leakage from inner-fold validation samples.
+
+    The inner CV method is independently configurable from the outer CV
+    (config['cv']['inner_method']), defaulting to StratifiedKFold if not set.
+
     Returns the fitted SearchCV object.
     """
+  
     pipeline = Pipeline([
         ("scaler", StandardScaler()),
         ("clf",    estimator),
@@ -288,47 +336,51 @@ def run_hyperparameter_search(estimator, param_grid, model_config,
     strategy   = model_config.get("search_strategy", "grid")
     scoring    = model_config.get("scoring", "roc_auc")
 
-    cv_config       = cv_config or {}
-    method          = cv_config.get("method")
-    inner_n_splits  = cv_config.get("inner_n_splits")
-    n_repeats       = cv_config.get("n_repeats")
-    test_size       = cv_config.get("test_size")
+    cv_config        = cv_config or {}
+    inner_method     = cv_config.get("inner_method", "StratifiedKFold")
+    inner_n_splits   = cv_config.get("inner_n_splits")
+    inner_n_repeats  = cv_config.get("inner_n_repeats")
+    inner_test_size  = cv_config.get("inner_test_size")
 
     SUPPORTED_INNER_CV_METHODS = {"StratifiedKFold", "RepeatedStratifiedKFold", "StratifiedShuffleSplit"}
-    if method not in SUPPORTED_INNER_CV_METHODS:
+    if inner_method not in SUPPORTED_INNER_CV_METHODS:
         raise ValueError(
-            f"Unsupported inner CV method '{method}'. "
+            f"Unsupported cv.inner_method '{inner_method}'. "
             f"Choose one of: {sorted(SUPPORTED_INNER_CV_METHODS)}"
         )
+    if not inner_n_splits:
+        raise ValueError("cv.inner_n_splits is required for the inner CV.")
 
-    inner_cv         = StratifiedKFold(
-            n_splits     = inner_n_splits,
-            shuffle      = True,
-            random_state = random_seed
+    if inner_method == "StratifiedKFold":
+        inner_cv = StratifiedKFold(
+            n_splits=inner_n_splits, shuffle=True, random_state=random_seed
         )
 
-    """"
-    if method == "RepeatedStratifiedKFold":
-        inner_cv         = RepeatedStratifiedKFold(
-            n_splits     = inner_n_splits,
-            n_repeats    = n_repeats,
-            random_state = random_seed
+    elif inner_method == "RepeatedStratifiedKFold":
+        if not inner_n_repeats:
+            raise ValueError(
+                "cv.inner_n_repeats is required when "
+                "cv.inner_method == 'RepeatedStratifiedKFold'."
+            )
+        inner_cv = RepeatedStratifiedKFold(
+            n_splits=inner_n_splits, n_repeats=inner_n_repeats, random_state=random_seed
         )
-    elif method == "StratifiedShuffleSplit":
-        inner_cv         = StratifiedShuffleSplit(
-            n_splits     = inner_n_splits,
-            test_size    = test_size,
-            random_state = random_seed
-        )
-    elif method == "StratifiedKFold":
-        inner_cv         = StratifiedKFold(
-            n_splits     = inner_n_splits,
-            shuffle      = True,
-            random_state = random_seed
-        )
-    """
 
-    logger.info(f"Inner CV: method={method}, n_splits={inner_n_splits}")
+    elif inner_method == "StratifiedShuffleSplit":
+        if inner_test_size is None:
+            raise ValueError(
+                "cv.inner_test_size is required when "
+                "cv.inner_method == 'StratifiedShuffleSplit'."
+            )
+        inner_cv = StratifiedShuffleSplit(
+            n_splits=inner_n_splits, test_size=inner_test_size, random_state=random_seed
+        )
+
+    logger.info(
+        f"Inner CV: {inner_method}(n_splits={inner_n_splits}"
+        f"{f', n_repeats={inner_n_repeats}' if inner_method == 'RepeatedStratifiedKFold' else ''}"
+        f"{f', test_size={inner_test_size}' if inner_method == 'StratifiedShuffleSplit' else ''})"
+    )
 
     common_kwargs = dict(
         estimator=pipeline,
@@ -369,20 +421,19 @@ def run_hyperparameter_search(estimator, param_grid, model_config,
 # --------------------------------------------------------------------------- #
 # evaluation
 # --------------------------------------------------------------------------- #
-# Registry of supported metrics — maps config name -> callable(y_true, y_score)
-# All callables accept (y_true, y_score) where y_score is continuous probability
-# of the positive class, except where noted.
+# Registry of supported metrics:
 _METRIC_REGISTRY = {
-    "roc_auc":            lambda yt, ys: roc_auc_score(yt, ys),
-    "average_precision":  lambda yt, ys: average_precision_score(yt, ys),
-    "balanced_accuracy":  lambda yt, ys: balanced_accuracy_score(yt, (ys >= 0.5).astype(int)),
-    "f1_weighted":        lambda yt, ys: f1_score(yt, (ys >= 0.5).astype(int),
-                                                   average="weighted", zero_division=0),
-    "matthews_corrcoef":  lambda yt, ys: matthews_corrcoef(yt, (ys >= 0.5).astype(int)),
+    "roc_auc":            lambda yt, ys, thr: roc_auc_score(yt, ys),
+    "average_precision":  lambda yt, ys, thr: average_precision_score(yt, ys),
+    "balanced_accuracy":  lambda yt, ys, thr: balanced_accuracy_score(yt, (ys >= thr).astype(int)),
+    "f1_weighted":        lambda yt, ys, thr: f1_score(yt, (ys >= thr).astype(int),
+                                                        average="weighted", zero_division=0),
+    "matthews_corrcoef":  lambda yt, ys, thr: matthews_corrcoef(yt, (ys >= thr).astype(int)),
 }
 
 
-def evaluate(best_pipeline, X_test_arr, y_test, pos_label, metric_names, logger):
+def evaluate(best_pipeline, X_test_arr, y_test, pos_label, metric_names, logger, threshold=0.5):
+ 
     """Score the fitted pipeline on the test fold.
 
     Returns
@@ -390,15 +441,21 @@ def evaluate(best_pipeline, X_test_arr, y_test, pos_label, metric_names, logger)
     metrics : dict[str, float]
     y_prob  : np.ndarray  (probability of pos_label for each test sample)
     """
-    # predict_proba returns [prob_class0, prob_class1]
-    # For binary tasks pos_label is always 1 in our config, so index 1 is safe.
-    # Guard against edge cases where classes might be [0] only.
+
     classes = best_pipeline.classes_ if hasattr(best_pipeline, "classes_") else None
 
     proba = best_pipeline.predict_proba(X_test_arr)
-    if classes is not None and 1 in classes:
+    if classes is not None and pos_label in classes:
         pos_idx = list(classes).index(pos_label)
     else:
+        # Fallback: sklearn Pipeline exposes classes_ from the final step for
+        # sklearn>=1.0, so this should be rare. Warn loudly since assuming
+        # index 1 can silently give wrong probabilities if it's ever hit.
+        logger.warning(
+            f"Could not determine class index for pos_label={pos_label} "
+            f"(classes_={classes}). Falling back to column index 1 — "
+            f"verify this is correct for this model/sklearn version."
+        )
         pos_idx = 1   # fallback
     y_prob = proba[:, pos_idx]
 
@@ -409,7 +466,7 @@ def evaluate(best_pipeline, X_test_arr, y_test, pos_label, metric_names, logger)
             logger.warning(f"Unknown metric '{metric}' — skipping.")
             continue
         try:
-            metrics[metric] = float(fn(y_test.values, y_prob))
+            metrics[metric] = float(fn(y_test.values, y_prob, threshold))
             logger.info(f"  {metric}: {metrics[metric]:.4f}")
         except Exception as exc:
             logger.warning(f"  {metric} failed: {exc}")
@@ -422,16 +479,14 @@ def evaluate(best_pipeline, X_test_arr, y_test, pos_label, metric_names, logger)
 # feature importance extraction
 # --------------------------------------------------------------------------- #
 def extract_importances(best_pipeline, selected_genes, model_name, logger):
-    """Extract gene-level importance scores from the fitted pipeline step 'clf'.
+    """Extract gene-level importance scores
 
     Supported patterns:
       - feature_importances_  : RandomForest, XGBoost
       - coef_                 : LogisticRegression (elasticnet)
       - CalibratedClassifierCV -> base_estimator.coef_ : LinearSVC
 
-    Returns
-    -------
-    pd.DataFrame with columns [gene, importance, abs_importance]
+    Returns a pd.DataFrame with columns [gene, importance, abs_importance]
     sorted descending by abs_importance.
     """
     clf_step = best_pipeline.named_steps["clf"]
@@ -447,18 +502,16 @@ def extract_importances(best_pipeline, selected_genes, model_name, logger):
         coef = clf_step.coef_
         importances = coef.ravel()   # binary: shape (1, n_features) or (n_features,)
 
-    elif hasattr(clf_step, "estimator"):
+    elif hasattr(clf_step, "calibrated_classifiers_"):
         # CalibratedClassifierCV wrapping LinearSVC
-        base = clf_step.estimator
-        if hasattr(base, "coef_"):
-            importances = base.coef_.ravel()
-        elif hasattr(clf_step, "calibrated_classifiers_"):
+        coefs = []
+        for cc in clf_step.calibrated_classifiers_:
+            sub_est = getattr(cc, "estimator", None) or getattr(cc, "base_estimator", None)
+            if sub_est is not None and hasattr(sub_est, "coef_"):
+                coefs.append(sub_est.coef_.ravel())
+        if coefs:
             # average coef across calibrated folds
-            coefs = [cc.estimator.coef_.ravel()
-                     for cc in clf_step.calibrated_classifiers_
-                     if hasattr(cc.estimator, "coef_")]
-            if coefs:
-                importances = np.mean(coefs, axis=0)
+            importances = np.mean(coefs, axis=0)
 
     if importances is None:
         logger.warning(
@@ -509,6 +562,7 @@ def main(expression_path, splits_path,
     random_seed  = config["cv"]["random_seed"]
     pos_label    = task_config.get("pos_label", 1)
     metric_names = eval_config.get("metrics", ["roc_auc"])
+    threshold    = eval_config.get("threshold", 0.5)
 
     # ------------------------------------------------------------------ #
     # 1. Load fold data
@@ -517,6 +571,10 @@ def main(expression_path, splits_path,
         expression_path, splits_path,
         task_name, task_config, fold_idx, logger
     )
+
+    # Drop manually-excluded genes
+    exclude_genes = task_config.get("exclude_genes", []) or []
+    X_train, X_test = exclude_configured_genes(X_train, X_test, exclude_genes, logger)
 
     # ------------------------------------------------------------------ #
     # 2. Fold-local feature selection (on training data only)
@@ -544,12 +602,13 @@ def main(expression_path, splits_path,
     # ------------------------------------------------------------------ #
     # 4. Build estimator
     # ------------------------------------------------------------------ #
-    estimator = build_estimator(model_name, model_config, random_seed, logger)
-
+    estimator = build_estimator(
+        model_name, model_config, random_seed, logger,
+        inner_n_splits=config["cv"].get("inner_n_splits"),
+    )
     # ------------------------------------------------------------------ #
     # 5. Hyperparameter search (inner CV on training fold only)
     # ------------------------------------------------------------------ #
-    # param_grid keys already use pipeline prefix "clf__" per config convention
     param_grid = model_config.get("param_grid", {}) or {}
 
     search = run_hyperparameter_search(
@@ -565,7 +624,8 @@ def main(expression_path, splits_path,
     # ------------------------------------------------------------------ #
     logger.info("Evaluating on held-out test fold ...")
     metrics, y_prob = evaluate(
-        best_pipeline, X_test_arr, y_test, pos_label, metric_names, logger
+        best_pipeline, X_test_arr, y_test, pos_label, metric_names, logger,
+        threshold=threshold,
     )
 
     # augment metrics with provenance fields
@@ -576,6 +636,8 @@ def main(expression_path, splits_path,
         "n_train":       int(len(y_train)),
         "n_test":        int(len(y_test)),
         "n_genes_selected": len(selected_genes),
+        "excluded_genes": exclude_genes,
+        "classification_threshold": threshold,
         "best_params":   search.best_params_,
         "best_inner_cv_score": float(search.best_score_),
     })
@@ -597,7 +659,7 @@ def main(expression_path, splits_path,
         "sample_id":    y_test.index.tolist(),
         "y_true":       y_test.values,
         "y_prob":       y_prob,
-        "y_pred":       (y_prob >= 0.5).astype(int),
+        "y_pred":       (y_prob >= threshold).astype(int),
         "task":         task_name,
         "model":        model_name,
         "fold":         int(fold_idx),
@@ -681,5 +743,3 @@ if __name__ == "__main__":
             log_path=args.log,
             n_threads=args.threads,
         )
-
-
