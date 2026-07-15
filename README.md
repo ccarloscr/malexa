@@ -1,5 +1,6 @@
 # MALEXA
 
+[WARNING!]
 ### Project In-development
 
 ## MAchine Learning EXpression-based Algorithms
@@ -90,6 +91,29 @@ Each `03_train_model` job (one per task × model × fold combination) is fully i
 
 ---
 
+## Installation
+
+**Requirements:** Python ≥ 3.10, Conda or Mamba, Snakemake ≥ 7.
+
+```bash
+# Clone the repository
+git clone https://github.com/ccarloscr/malexa.git
+cd malexa
+
+# Create and activate the environment
+conda env create -f envs/pipeline.yaml
+conda activate luad-pipeline
+
+# Verify Snakemake can parse the DAG
+snakemake --dry-run
+```
+
+Core Python dependencies: `snakemake`, `pandas`, `numpy`, `scikit-learn`, `xgboost`, `matplotlib`, `pyyaml`.
+
+> If using a the RNA-seq expression matrix in parquet format, make sure pyarrow is installed.
+---
+
+
 ## Scripts
 
 ### `01_load_clean_data.py` — Load and clean
@@ -145,73 +169,7 @@ Runs **once per (task, model, fold)** combination; these jobs are fully independ
 
 ## Configuration (`config.yaml`)
 
-All pipeline behaviour is controlled from `config.yaml`. Scripts contain no hardcoded task or model logic.
-
-```yaml
-data:
-  counts_file:   "data/counts.parquet"
-  clinical_file: "data/clinical.csv"
-  sample_id_col: "sample_id"
-  output_dir:    "results"
-
-cv:
-  n_splits:    5
-  random_seed: 42
-
-preprocessing:
-  max_gene_missing_frac:   0.20
-  max_sample_missing_frac: 0.20
-
-feature_selection:
-  min_cpm:          1.0   # median CPM threshold (applied on training fold only)
-  min_variance_pct: 10    # drop lowest-variance decile (applied on training fold only)
-
-tasks:
-  cancer_stage:
-    label_col: "cancer_stage"
-    models: [random_forest, xgboost]
-    pos_label: 1                 # 1 = Late stage
-
-  EGFR_mutation:
-    label_col: "EGFR_mutation_status"
-    models: [linear_svm, elasticnet_logreg]
-    pos_label: 1
-
-  KRAS_mutation:
-    label_col: "KRAS_mutation_status"
-    models: [linear_svm, elasticnet_logreg]
-    pos_label: 1
-
-models:
-  random_forest:
-    estimator_class: "sklearn.ensemble.RandomForestClassifier"
-    search_strategy: random
-    n_iter: 30
-    scoring: "roc_auc"
-    fixed_params: {n_jobs: 4, random_state: 42}
-    param_grid:
-      clf__n_estimators:     [200, 500, 1000]
-      clf__max_depth:        [null, 5, 10, 20]
-      clf__min_samples_leaf: [1, 3, 5, 10]
-      clf__max_features:     ["sqrt", "log2", 0.1, 0.2]
-      clf__class_weight:     ["balanced", null]
-  # ... xgboost, linear_svm, elasticnet_logreg defined similarly
-
-evaluation:
-  metrics:
-    - roc_auc
-    - average_precision
-    - balanced_accuracy
-    - f1_weighted
-    - matthews_corrcoef
-  primary_metric: "roc_auc"
-
-interpretation:
-  top_n_genes:  50
-  aggregation:  "mean_rank"
-```
-
-To add a new classification task, append an entry under `tasks` and ensure the label column exists in the clinical CSV. To add a new model, append an entry under `models` and reference it in the relevant task's `models` list. No script changes are required.
+All pipeline behaviour is controlled from `config.yaml`.
 
 ---
 
@@ -224,27 +182,6 @@ Raw data files are **not included** in this repository. Download from GDC:
 2. **Clinical metadata** (`tcga_luad_clinical.csv`): Clinical supplement from the GDC Data Portal for `TCGA-LUAD`. The file must contain at minimum the columns `sample_id`, `cancer_stage`, `EGFR_mutation_status`, and `KRAS_mutation_status`. Column names are configurable in `config.yaml`.
 
 Place both files under `data/raw/` before running the pipeline.
-
----
-
-## Installation
-
-**Requirements:** Python ≥ 3.10, Conda or Mamba, Snakemake ≥ 7.
-
-```bash
-# Clone the repository
-git clone https://github.com/<your-org>/tcga-luad-classification.git
-cd tcga-luad-classification
-
-# Create and activate the environment
-conda env create -f envs/pipeline.yaml
-conda activate luad-pipeline
-
-# Verify Snakemake can parse the DAG
-snakemake --dry-run
-```
-
-Core Python dependencies: `snakemake`, `pandas`, `numpy`, `scikit-learn`, `xgboost`, `matplotlib`, `pyyaml`.
 
 ---
 
@@ -406,14 +343,6 @@ models:
 ```
 
 Then reference `lightgbm` in any task's `models` list. The Snakefile and all scripts pick it up automatically.
-
----
-
-## Citation
-
-If you use this pipeline in your research, please cite the TCGA-LUAD dataset:
-
-> Cancer Genome Atlas Research Network. (2014). Comprehensive molecular profiling of lung adenocarcinoma. *Nature*, 511(7511), 543–550. https://doi.org/10.1038/nature13385
 
 ---
 
