@@ -359,13 +359,14 @@ def plot_gene_importance(agg_df: pd.DataFrame,
         ax.tick_params(axis="x", labelsize=8)
         ax.spines[["top", "right"]].set_visible(False)
 
-        # annotate fold coverage
+        # annotate fold coverage using axes-fraction x so placement is
+        # stable regardless of bar direction or auto-scaled xlim
         for i, (_, row) in enumerate(model_df.iterrows()):
             ax.text(
-                ax.get_xlim()[0],
-                i,
+                0.01, i,
                 f" n={int(row['n_folds_present'])}",
-                va="center", ha="left", fontsize=6, color="grey"
+                va="center", ha="left", fontsize=6, color="grey",
+                transform=ax.get_yaxis_transform(),
             )
 
     # ------------------------------------------------------------------ #
@@ -428,7 +429,10 @@ def main(importance_paths: list,
     interp_cfg   = config.get("interpretation", {})
     top_n        = int(interp_cfg.get("top_n_genes", 50))
     strategy     = interp_cfg.get("aggregation", "mean_rank")
-    n_folds      = int(config.get("cv", {}).get("n_splits", 5))
+    cv_cfg   = config.get("cv", {})
+    n_splits = int(cv_cfg.get("n_splits", 5))
+    n_repeats = int(cv_cfg.get("n_repeats", 1)) if cv_cfg.get("method") == "RepeatedStratifiedKFold" else 1
+    n_folds  = n_splits * n_repeats
 
     # ------------------------------------------------------------------ #
     # Load

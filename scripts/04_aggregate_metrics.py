@@ -126,7 +126,7 @@ def load_all_metrics(metrics_paths: list[Path], metric_keys: list[str], logger) 
             "fold":        data.get("fold",  fold),
             "n_train":     data.get("n_train", np.nan),
             "n_test":      data.get("n_test",  np.nan),
-            "n_features_selected": data.get("n_features_selected", np.nan),
+            "n_features_selected": data.get("n_genes_selected", np.nan),
             "best_params": json.dumps(data.get("best_params", {})),
         }
 

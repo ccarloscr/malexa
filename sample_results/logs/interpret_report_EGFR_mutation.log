@@ -1,0 +1,44 @@
+2026-07-19 02:37:51,833 [INFO] Task: EGFR_mutation
+2026-07-19 02:37:51,833 [INFO] Processing 30 feature_importances.csv files ...
+2026-07-19 02:37:52,312 [INFO] Loaded importances: 7896 unique genes, 2 model(s), 15 fold(s).
+2026-07-19 02:37:52,327 [INFO] Aggregation strategy: mean_rank
+2026-07-19 02:37:52,542 [INFO] Consensus ranking: 41 candidate genes across 2 model(s).
+2026-07-19 02:37:52,706 [INFO] Saved gene importance report: results/EGFR_mutation/gene_importance_report.csv
+2026-07-19 02:37:52,710 [INFO] 
+  Top genes for model 'elasticnet_logreg':
+    rank   1  ENSG00000146733.14    mean_imp=+0.1284  mean_rank=22.5  folds=15
+    rank   2  ENSG00000153574.9     mean_imp=-0.0714  mean_rank=36.3  folds=3
+    rank   3  ENSG00000111726.13    mean_imp=-0.0902  mean_rank=45.1  folds=15
+    rank   4  ENSG00000188158.16    mean_imp=+0.0851  mean_rank=51.2  folds=15
+    rank   5  ENSG00000182378.14    mean_imp=+0.0918  mean_rank=55.4  folds=15
+    rank   6  ENSG00000146729.10    mean_imp=+0.0752  mean_rank=72.7  folds=15
+    rank   7  ENSG00000108950.12    mean_imp=-0.0729  mean_rank=74.0  folds=15
+    rank   8  ENSG00000054983.17    mean_imp=+0.1003  mean_rank=79.7  folds=15
+    rank   9  ENSG00000133943.21    mean_imp=+0.1024  mean_rank=91.8  folds=15
+    rank  10  ENSG00000129103.19    mean_imp=+0.0742  mean_rank=93.9  folds=15
+2026-07-19 02:37:52,712 [INFO] 
+  Top genes for model 'xgboost':
+    rank   1  ENSG00000120875.9     mean_imp=+0.0103  mean_rank=19.9  folds=15
+    rank   2  ENSG00000129103.19    mean_imp=+0.0029  mean_rank=113.9  folds=15
+    rank   3  ENSG00000025423.11    mean_imp=+0.0020  mean_rank=171.0  folds=1
+    rank   4  ENSG00000106153.13    mean_imp=+0.0017  mean_rank=213.7  folds=15
+    rank   5  ENSG00000126016.16    mean_imp=+0.0057  mean_rank=320.9  folds=15
+    rank   6  ENSG00000163406.11    mean_imp=+0.0078  mean_rank=322.2  folds=15
+    rank   7  ENSG00000015676.18    mean_imp=+0.0039  mean_rank=384.7  folds=15
+    rank   8  ENSG00000090924.15    mean_imp=+0.0041  mean_rank=386.0  folds=15
+    rank   9  ENSG00000117525.14    mean_imp=+0.0027  mean_rank=396.8  folds=15
+    rank  10  ENSG00000001626.16    mean_imp=+0.0009  mean_rank=410.0  folds=1
+2026-07-19 02:37:52,713 [INFO] 
+  Cross-model consensus top genes:
+    consensus_rank   1  ENSG00000129103.19    score=103.93  n_models=2  (elasticnet_logreg,xgboost)
+    consensus_rank   2  ENSG00000120875.9     score=172.50  n_models=2  (elasticnet_logreg,xgboost)
+    consensus_rank   3  ENSG00000015676.18    score=273.65  n_models=2  (elasticnet_logreg,xgboost)
+    consensus_rank   4  ENSG00000001626.16    score=317.00  n_models=2  (elasticnet_logreg,xgboost)
+    consensus_rank   5  ENSG00000146733.14    score=364.50  n_models=2  (elasticnet_logreg,xgboost)
+    consensus_rank   6  ENSG00000108950.12    score=365.25  n_models=2  (elasticnet_logreg,xgboost)
+    consensus_rank   7  ENSG00000146729.10    score=381.35  n_models=2  (elasticnet_logreg,xgboost)
+    consensus_rank   8  ENSG00000211898.7     score=427.93  n_models=2  (elasticnet_logreg,xgboost)
+    consensus_rank   9  ENSG00000120889.13    score=433.30  n_models=2  (elasticnet_logreg,xgboost)
+    consensus_rank  10  ENSG00000164649.20    score=433.95  n_models=2  (elasticnet_logreg,xgboost)
+2026-07-19 02:37:53,610 [INFO] Saved gene importance plot: results/EGFR_mutation/gene_importance_plot.png
+2026-07-19 02:37:53,610 [INFO] Done.

@@ -1,0 +1,11 @@
+2026-07-19 02:49:40,418 [INFO] Task: KRAS_mutation
+2026-07-19 02:49:40,418 [INFO] Aggregating 30 metrics.json files ...
+2026-07-19 02:49:40,453 [INFO] Loaded metrics for 2 model(s) x 15 fold(s).
+2026-07-19 02:49:40,462 [INFO] Saved aggregated metrics table: results/KRAS_mutation/aggregated_metrics.csv
+2026-07-19 02:49:40,465 [INFO] Model comparison summary:
+Model                                          roc_auc       average_precision       balanced_accuracy             f1_weighted       matthews_corrcoef
+------------------------------------------------------------------------------------------------------------------------------------------------------
+elasticnet_logreg                      0.8534 ± 0.0580         0.6971 ± 0.0841         0.7665 ± 0.0641         0.8093 ± 0.0464         0.5230 ± 0.1206
+xgboost                                0.8240 ± 0.0509         0.6460 ± 0.0711         0.6440 ± 0.0633         0.7510 ± 0.0480         0.3780 ± 0.1233
+2026-07-19 02:49:41,064 [INFO] Saved comparison plot: results/KRAS_mutation/model_comparison.png
+2026-07-19 02:49:41,064 [INFO] Done.

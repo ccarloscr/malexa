@@ -1,14 +1,10 @@
 # macOS
 .DS_Store
 
-# Jupyter notebook temp files
+# Jupyter notebooka and temp files
 .ipynb_checkpoints/
 .jupyter/
-
-# Virtual envs
-venv/
-env/
-.venv/
+*.ipynb
 
 # Datasets
 *.parquet
@@ -21,5 +17,5 @@ data/
 __pycache__/
 *.pyc
 
-# Old dataset
-gdc-ml/
+# Past iterations
+gdc-ml*

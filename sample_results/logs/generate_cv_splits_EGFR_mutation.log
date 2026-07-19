@@ -1,0 +1,23 @@
+2026-07-18 21:11:01,005 [INFO] Task: EGFR_mutation
+2026-07-18 21:11:01,005 [INFO] Loading expression index from: results/data/expression_clean.csv
+2026-07-18 21:11:01,078 [INFO] Expression matrix has 516 samples.
+2026-07-18 21:11:01,078 [INFO] Loading clinical metadata from: results/data/clinical_clean.csv
+2026-07-18 21:11:01,082 [INFO] Clinical table: 516 samples x 7 columns
+2026-07-18 21:11:01,085 [INFO] Task 'EGFR_mutation': 516 samples with known labels. Class counts: {0: 442, 1: 74}
+2026-07-18 21:11:01,085 [INFO] Generating CV splits (method=RepeatedStratifiedKFold) ...
+2026-07-18 21:11:01,086 [INFO]   [RepeatedStratifiedKFold] Repeat 0 Fold 0: train=412 {0: 353, 1: 59} test=104 {0: 89, 1: 15}
+2026-07-18 21:11:01,087 [INFO]   [RepeatedStratifiedKFold] Repeat 0 Fold 1: train=413 {0: 353, 1: 60} test=103 {0: 89, 1: 14}
+2026-07-18 21:11:01,088 [INFO]   [RepeatedStratifiedKFold] Repeat 0 Fold 2: train=413 {0: 354, 1: 59} test=103 {0: 88, 1: 15}
+2026-07-18 21:11:01,088 [INFO]   [RepeatedStratifiedKFold] Repeat 0 Fold 3: train=413 {0: 354, 1: 59} test=103 {0: 88, 1: 15}
+2026-07-18 21:11:01,089 [INFO]   [RepeatedStratifiedKFold] Repeat 0 Fold 4: train=413 {0: 354, 1: 59} test=103 {0: 88, 1: 15}
+2026-07-18 21:11:01,090 [INFO]   [RepeatedStratifiedKFold] Repeat 1 Fold 0: train=412 {0: 353, 1: 59} test=104 {0: 89, 1: 15}
+2026-07-18 21:11:01,090 [INFO]   [RepeatedStratifiedKFold] Repeat 1 Fold 1: train=413 {0: 353, 1: 60} test=103 {0: 89, 1: 14}
+2026-07-18 21:11:01,091 [INFO]   [RepeatedStratifiedKFold] Repeat 1 Fold 2: train=413 {0: 354, 1: 59} test=103 {0: 88, 1: 15}
+2026-07-18 21:11:01,091 [INFO]   [RepeatedStratifiedKFold] Repeat 1 Fold 3: train=413 {0: 354, 1: 59} test=103 {0: 88, 1: 15}
+2026-07-18 21:11:01,092 [INFO]   [RepeatedStratifiedKFold] Repeat 1 Fold 4: train=413 {0: 354, 1: 59} test=103 {0: 88, 1: 15}
+2026-07-18 21:11:01,093 [INFO]   [RepeatedStratifiedKFold] Repeat 2 Fold 0: train=412 {0: 353, 1: 59} test=104 {0: 89, 1: 15}
+2026-07-18 21:11:01,093 [INFO]   [RepeatedStratifiedKFold] Repeat 2 Fold 1: train=413 {0: 353, 1: 60} test=103 {0: 89, 1: 14}
+2026-07-18 21:11:01,094 [INFO]   [RepeatedStratifiedKFold] Repeat 2 Fold 2: train=413 {0: 354, 1: 59} test=103 {0: 88, 1: 15}
+2026-07-18 21:11:01,095 [INFO]   [RepeatedStratifiedKFold] Repeat 2 Fold 3: train=413 {0: 354, 1: 59} test=103 {0: 88, 1: 15}
+2026-07-18 21:11:01,095 [INFO]   [RepeatedStratifiedKFold] Repeat 2 Fold 4: train=413 {0: 354, 1: 59} test=103 {0: 88, 1: 15}
+2026-07-18 21:11:01,103 [INFO] Wrote splits to: results/splits/EGFR_mutation_splits.json

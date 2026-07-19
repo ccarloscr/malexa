@@ -5,19 +5,15 @@ Load raw RNA-seq counts and clinical metadata, align samples by
 sample_id, and clean missing/invalid values.
 
 This step is intentionally generic and task-agnostic:
-  - It does NOT binarize cancer stage (that's config-driven, per-task logic
-    that belongs in 02_generate_cv_splits.py).
   - It does NOT filter low-expression/low-variance genes (that must happen
-    inside each CV fold, on training data only, to avoid leakage — see
-    03_train_model.py).
+    inside each CV fold, on training data only, to avoid leakage).
 
-What it DOES do:
+What it does:
   - Align samples common to both the counts matrix and clinical table.
   - Drop genes/samples with excessive missing raw counts (config-controlled
     thresholds), impute rare residual NaNs with 0.
   - Standardize mutation-status encodings (WT/Mutant, yes/no, 0/1, ...) to
     a clean {0, 1} column, leaving true unknowns as NaN.
-  - Tidy free-text stage strings (whitespace/case), leaving vocabulary as-is.
   - Write a QC report documenting what was dropped and why, for auditability.
 
 Runnable both as a Snakemake `script:` and standalone from the CLI for
@@ -29,7 +25,6 @@ import logging
 import sys
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 
 
@@ -80,7 +75,6 @@ def load_counts(path):
         counts = counts.groupby(counts.index).sum()
         # Non-numeric columns are dropped by groupby().sum()
         # Dropped columns are logged for convenience
-        import logging
         logging.getLogger("load_clean_data").info(
             f"load_counts: {n_dupes} duplicate gene IDs detected and summed."
         )
@@ -192,30 +186,10 @@ def standardize_mutation_column(series, colname, logger):
     return cleaned
 
 
-def standardize_stage_column(series, logger):
-    """Trim whitespace / normalize placeholders in free-text stage strings.
-
-    Deliberately does NOT binarize into Early/Late — that mapping is
-    config-driven per task and happens in 02_generate_cv_splits.py.
-    """
-    cleaned = series.astype(str).str.strip()
-    placeholder_na = {"nan", "NaN", "", "not reported", "unknown", "NA", "N/A"}
-    cleaned = cleaned.replace({p: np.nan for p in placeholder_na})
-    return cleaned
-
-
 def clean_clinical(clinical, config, logger):
     clinical = clinical.copy()
 
-    stage_col = config.get("clinical_columns", {}).get("stage", "cancer_stage")
-    if stage_col in clinical.columns:
-        clinical[stage_col] = standardize_stage_column(clinical[stage_col], logger)
-    else:
-        logger.warning(f"Configured stage column '{stage_col}' not found in clinical metadata.")
-
-    mutation_cols = config.get("clinical_columns", {}).get(
-        "mutation_status", ["EGFR_mutation_status", "KRAS_mutation_status"]
-    )
+    mutation_cols = config.get("clinical_columns", {}).get("mutation_status", [])
     for col in mutation_cols:
         if col in clinical.columns:
             clinical[col] = standardize_mutation_column(clinical[col], col, logger)

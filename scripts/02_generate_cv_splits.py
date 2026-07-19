@@ -10,9 +10,6 @@ What this script does:
   - Reads the clean expression matrix and clinical metadata written by
     01_load_clean_data.py.
   - Extracts and validates the label column for the requested task.
-  - For the cancer_stage task: binarises free-text stage strings to
-    {0 = Early, 1 = Late} using the mapping in config.yaml.  Samples whose
-    stage cannot be mapped are excluded and logged.
   - For mutation-status tasks: drops samples where the status is NaN (unknown
     after 01_load_clean_data.py standardisation).
   - Writes a JSON file containing, for each fold, the list of sample IDs
@@ -27,7 +24,7 @@ Output JSON schema
   "label_col":  "<column name>",
   "n_splits":   5,
   "random_seed": 42,
-  "label_counts": {"0": 212, "1": 289},   // after filtering unknowns
+  "label_counts": {"0": 212, "1": 289},
   "samples_dropped_unknown_label": ["TCGA-XX-YYYY", ...],
   "folds": [
     {
@@ -79,54 +76,6 @@ def get_logger(log_path=None):
 # --------------------------------------------------------------------------- #
 # label extraction
 # --------------------------------------------------------------------------- #
-def binarize_stage(series, stage_map, logger):
-    """Convert free-text stage strings to {0, 1} using config mapping.
-
-    Parameters
-    ----------
-    series : pd.Series
-        Raw (already whitespace-trimmed) stage strings from the clean clinical
-        file.  NaN values produced by 01_load_clean_data.py are propagated.
-    stage_map : dict
-        {"early": [list of stage strings], "late": [list of stage strings]}
-        as read from config.yaml['stage_binarization'].
-
-    Returns
-    -------
-    pd.Series
-        Integer {0, 1} where mappable, NaN where not.
-    """
-    early_set = {s.strip() for s in stage_map.get("early", [])}
-    late_set  = {s.strip() for s in stage_map.get("late",  [])}
-
-    def _map(val):
-        if pd.isna(val):
-            return np.nan
-        v = str(val).strip()
-        if v in early_set:
-            return 0
-        if v in late_set:
-            return 1
-        return np.nan   # unknown / not-reported
-
-    binarized = series.map(_map)
-
-    # report anything that was a non-NaN string but still didn't map
-    unmapped_mask = series.notna() & binarized.isna()
-    if unmapped_mask.any():
-        unmapped_vals = sorted(series[unmapped_mask].dropna().unique().tolist())
-        logger.warning(
-            f"Stage binarization: {unmapped_mask.sum()} samples had stage "
-            f"values not in early/late lists and will be excluded. "
-            f"Unmapped values: {unmapped_vals}"
-        )
-
-    return binarized
-
-
-# --------------------------------------------------------------------------- #
-# label extraction
-# --------------------------------------------------------------------------- #
 def extract_labels(clinical, task_name, task_config, config, logger):
     """Extract and validate labels for *task_name* from the clean clinical table.
 
@@ -145,37 +94,18 @@ def extract_labels(clinical, task_name, task_config, config, logger):
             f"clinical table. Available columns: {list(clinical.columns)}"
         )
 
-    raw = clinical[label_col].copy()
-
-    # ------------------------------------------------------------------ #
-    # task-specific label preparation
-    # ------------------------------------------------------------------ #
-    stage_col = config.get("clinical_columns", {}).get("stage", "cancer_stage")
-    is_stage_task = (label_col == stage_col) or (task_name == "cancer_stage")
-
-    if is_stage_task:
-        # cancer stage task: free-text -> binary
-        stage_map = config.get("stage_binarization", {})
-        if not stage_map:
-            raise ValueError(
-                "Task uses the stage column but 'stage_binarization' is "
-                "missing from config.yaml."
-            )
-        labels = binarize_stage(raw, stage_map, logger)
-    else:
-        # mutation-status tasks: already {0, 1, NaN} after script 01
-        labels = raw.copy()
-        # guard against any accidental non-binary values surviving script 01
-        valid_values = {0, 1, 0.0, 1.0}
-        bad_mask = labels.notna() & ~labels.isin(valid_values)
-        if bad_mask.any():
-            bad_vals = sorted(labels[bad_mask].unique().tolist())
-            logger.warning(
-                f"Task '{task_name}': {bad_mask.sum()} samples have unexpected "
-                f"non-binary label values {bad_vals} — treating as unknown and "
-                f"dropping."
-            )
-            labels[bad_mask] = np.nan
+    labels = clinical[label_col].copy()
+    # guard against any accidental non-binary values surviving script 01
+    valid_values = {0, 1, 0.0, 1.0}
+    bad_mask = labels.notna() & ~labels.isin(valid_values)
+    if bad_mask.any():
+        bad_vals = sorted(labels[bad_mask].unique().tolist())
+        logger.warning(
+            f"Task '{task_name}': {bad_mask.sum()} samples have unexpected "
+            f"non-binary label values {bad_vals} treating as unknown and "
+            f"dropping."
+        )
+        labels[bad_mask] = np.nan
 
 
     # ------------------------------------------------------------------ #

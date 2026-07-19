@@ -39,6 +39,7 @@ import json
 import logging
 import pickle
 import sys
+import inspect
 from pathlib import Path
 
 import numpy as np
@@ -256,9 +257,8 @@ def select_features(X_train, X_test, fs_config, logger):
 # normalization (log1p: logarithm of 1 plus)
 # --------------------------------------------------------------------------- #
 def log1p_normalise(X_train, X_test):
-    """log1p transformation on raw counts
+    """log1p transformation on raw counts after feature selection
 
-    Applied after feature selection (filtered by CPM and Variance) to avoid leakage.
     """
     return np.log1p(X_train.values), np.log1p(X_test.values)
 
@@ -281,7 +281,6 @@ def build_estimator(model_name, model_config, random_seed, logger, inner_n_split
 
     fixed_params = model_config.get("fixed_params", {}) or {}
     # Propagate random_seed from config if the estimator accepts random_state
-    import inspect
     sig = inspect.signature(EstimatorClass.__init__)
     if "random_state" in sig.parameters and "random_state" not in fixed_params:
         fixed_params = {**fixed_params, "random_state": random_seed}

@@ -1,0 +1,25 @@
+2026-07-18 21:47:34,949 [INFO] === train_model | task=KRAS_mutation | model=xgboost | fold=0 ===
+2026-07-18 21:47:34,952 [INFO] Fold 0: 412 train / 104 test samples.
+2026-07-18 21:47:36,557 [INFO] Train class counts: {0: 301, 1: 111}  |  Test class counts: {0: 76, 1: 28}
+2026-07-18 21:47:36,562 [INFO] Excluding 1 configured gene(s) before feature selection: ['ENSG00000133703.13']
+2026-07-18 21:47:37,878 [INFO] CPM filter (median >= 10.0): 10217 / 60659 genes retained.
+2026-07-18 21:47:37,907 [INFO] Variance filter (bottom 25% removed): 7663 / 10217 genes retained.
+2026-07-18 21:47:37,907 [INFO] Feature selection: 7663 genes selected for modelling.
+2026-07-18 21:47:37,978 [INFO] After feature selection + log1p: X_train=(412, 7663), X_test=(104, 7663)
+2026-07-18 21:47:38,007 [INFO] Instantiated XGBClassifier with fixed_params={'random_state': 123, 'n_jobs': 4, 'verbosity': 0, 'eval_metric': 'logloss'}
+2026-07-18 21:47:38,007 [INFO] Inner CV: StratifiedKFold(n_splits=2)
+2026-07-18 21:47:38,008 [INFO] RandomizedSearchCV: n_iter=15, scoring=roc_auc, inner_cv=2-fold
+2026-07-18 22:27:51,341 [INFO] Best params : {'clf__subsample': 0.7, 'clf__scale_pos_weight': 1, 'clf__n_estimators': 100, 'clf__max_depth': 5, 'clf__learning_rate': 0.05, 'clf__colsample_bytree': 0.5}
+2026-07-18 22:27:51,343 [INFO] Best CV roc_auc: 0.7790
+2026-07-18 22:27:51,343 [INFO] Evaluating on held-out test fold ...
+2026-07-18 22:27:51,356 [INFO]   roc_auc: 0.8459
+2026-07-18 22:27:51,357 [INFO]   average_precision: 0.6951
+2026-07-18 22:27:51,358 [INFO]   balanced_accuracy: 0.6071
+2026-07-18 22:27:51,360 [INFO]   f1_weighted: 0.7334
+2026-07-18 22:27:51,362 [INFO]   matthews_corrcoef: 0.4077
+2026-07-18 22:27:51,373 [INFO] Top-5 features: ENSG00000049246.14(0.011), ENSG00000106399.11(0.009), ENSG00000068650.18(0.009), ENSG00000173065.13(0.008), ENSG00000185298.13(0.005)
+2026-07-18 22:27:51,378 [INFO] Wrote metrics     -> results/KRAS_mutation/xgboost/fold0/metrics.json
+2026-07-18 22:27:51,382 [INFO] Wrote predictions -> results/KRAS_mutation/xgboost/fold0/predictions.csv
+2026-07-18 22:27:51,405 [INFO] Wrote importances -> results/KRAS_mutation/xgboost/fold0/feature_importances.csv
+2026-07-18 22:27:51,410 [INFO] Wrote model PKL   -> results/KRAS_mutation/xgboost/fold0/model.pkl
+2026-07-18 22:27:51,410 [INFO] === Done ===

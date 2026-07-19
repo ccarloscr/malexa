@@ -1,0 +1,11 @@
+2026-07-19 02:37:51,833 [INFO] Task: EGFR_mutation
+2026-07-19 02:37:51,833 [INFO] Aggregating 30 metrics.json files ...
+2026-07-19 02:37:51,872 [INFO] Loaded metrics for 2 model(s) x 15 fold(s).
+2026-07-19 02:37:51,882 [INFO] Saved aggregated metrics table: results/EGFR_mutation/aggregated_metrics.csv
+2026-07-19 02:37:51,885 [INFO] Model comparison summary:
+Model                                          roc_auc       average_precision       balanced_accuracy             f1_weighted       matthews_corrcoef
+------------------------------------------------------------------------------------------------------------------------------------------------------
+elasticnet_logreg                      0.8450 ± 0.0571         0.6269 ± 0.0982         0.7570 ± 0.0748         0.8696 ± 0.0306         0.5042 ± 0.1173
+xgboost                                0.8346 ± 0.0576         0.5422 ± 0.0982         0.5899 ± 0.0815         0.8331 ± 0.0321         0.3041 ± 0.1647
+2026-07-19 02:37:52,459 [INFO] Saved comparison plot: results/EGFR_mutation/model_comparison.png
+2026-07-19 02:37:52,460 [INFO] Done.

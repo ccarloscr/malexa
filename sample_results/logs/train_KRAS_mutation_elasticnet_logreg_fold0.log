@@ -1,0 +1,26 @@
+2026-07-19 00:55:06,309 [INFO] === train_model | task=KRAS_mutation | model=elasticnet_logreg | fold=0 ===
+2026-07-19 00:55:06,312 [INFO] Fold 0: 412 train / 104 test samples.
+2026-07-19 00:55:07,976 [INFO] Train class counts: {0: 301, 1: 111}  |  Test class counts: {0: 76, 1: 28}
+2026-07-19 00:55:07,980 [INFO] Excluding 1 configured gene(s) before feature selection: ['ENSG00000133703.13']
+2026-07-19 00:55:09,586 [INFO] CPM filter (median >= 10.0): 10217 / 60659 genes retained.
+2026-07-19 00:55:09,629 [INFO] Variance filter (bottom 25% removed): 7663 / 10217 genes retained.
+2026-07-19 00:55:09,630 [INFO] Feature selection: 7663 genes selected for modelling.
+2026-07-19 00:55:09,702 [INFO] After feature selection + log1p: X_train=(412, 7663), X_test=(104, 7663)
+2026-07-19 00:55:09,702 [INFO] Overriding fixed_params n_jobs=4 -> 1 for LogisticRegression; parallelism is controlled by the search's n_jobs (n_threads) instead, to avoid CPU oversubscription.
+2026-07-19 00:55:09,702 [INFO] Instantiated LogisticRegression with fixed_params={'solver': 'saga', 'penalty': 'elasticnet', 'max_iter': 5000, 'random_state': 123, 'n_jobs': 1}
+2026-07-19 00:55:09,703 [INFO] Inner CV: StratifiedKFold(n_splits=2)
+2026-07-19 00:55:09,703 [INFO] GridSearchCV: scoring=roc_auc, inner_cv=2-fold
+2026-07-19 01:16:45,126 [INFO] Best params : {'clf__C': 0.1, 'clf__class_weight': None, 'clf__l1_ratio': 0.3}
+2026-07-19 01:16:45,127 [INFO] Best CV roc_auc: 0.8447
+2026-07-19 01:16:45,127 [INFO] Evaluating on held-out test fold ...
+2026-07-19 01:16:45,160 [INFO]   roc_auc: 0.9008
+2026-07-19 01:16:45,161 [INFO]   average_precision: 0.7540
+2026-07-19 01:16:45,162 [INFO]   balanced_accuracy: 0.7688
+2026-07-19 01:16:45,164 [INFO]   f1_weighted: 0.8248
+2026-07-19 01:16:45,166 [INFO]   matthews_corrcoef: 0.5507
+2026-07-19 01:16:45,171 [INFO] Top-5 features: ENSG00000175505.11(0.298), ENSG00000175832.13(0.292), ENSG00000140403.12(0.228), ENSG00000012223.13(0.222), ENSG00000139289.13(0.197)
+2026-07-19 01:16:45,177 [INFO] Wrote metrics     -> results/KRAS_mutation/elasticnet_logreg/fold0/metrics.json
+2026-07-19 01:16:45,184 [INFO] Wrote predictions -> results/KRAS_mutation/elasticnet_logreg/fold0/predictions.csv
+2026-07-19 01:16:45,209 [INFO] Wrote importances -> results/KRAS_mutation/elasticnet_logreg/fold0/feature_importances.csv
+2026-07-19 01:16:45,213 [INFO] Wrote model PKL   -> results/KRAS_mutation/elasticnet_logreg/fold0/model.pkl
+2026-07-19 01:16:45,213 [INFO] === Done ===

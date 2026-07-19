@@ -1,0 +1,8 @@
+2026-07-18 21:10:31,531 [INFO] Loading counts from: data/raw/counts.parquet
+2026-07-18 21:10:31,722 [INFO] Raw counts matrix: 60660 genes x 517 samples
+2026-07-18 21:10:31,722 [INFO] Loading clinical metadata from: data/raw/clinical.csv
+2026-07-18 21:10:31,729 [INFO] Raw clinical table: 517 samples x 7 columns
+2026-07-18 21:10:31,763 [INFO] 517 samples common to both inputs after alignment.
+2026-07-18 21:10:31,862 [INFO] Dropping 1 samples with >25% missing values across genes.
+2026-07-18 21:10:37,045 [INFO] Final clean matrix: 60660 genes x 516 samples
+2026-07-18 21:10:37,045 [INFO] Wrote: results/data/expression_clean.csv, results/data/clinical_clean.csv, results/data/qc_report.json
