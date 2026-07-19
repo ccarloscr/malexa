@@ -4,7 +4,6 @@
 # Jupyter notebooka and temp files
 .ipynb_checkpoints/
 .jupyter/
-*.ipynb
 
 # Datasets
 *.parquet
