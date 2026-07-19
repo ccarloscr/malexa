@@ -30,8 +30,8 @@ outputs:
 # Pre-processing thresholds (applied in 01_load_clean_data.py)
 # -----------------------------------------------------------------------------
 preprocessing:
-  max_gene_missing_frac:   0.20   # drop gene if >20 % of samples have missing raw counts
-  max_sample_missing_frac: 0.20   # drop sample if >20 % of genes have missing raw counts
+  max_gene_missing_frac:   0.25   # drop gene if >25 % of samples have missing raw counts
+  max_sample_missing_frac: 0.25   # drop sample if >25 % of genes have missing raw counts
 
 
 # -----------------------------------------------------------------------------
@@ -39,8 +39,7 @@ preprocessing:
 # Used by 01_load_clean_data.py (standardization) and 02_generate_cv_splits.py
 # (label extraction). Keep in sync with the actual column names in the CSV.
 # -----------------------------------------------------------------------------
-clinical_columns:
-  stage: "cancer_stage"           # free-text stage column (e.g. "Stage IA", "Stage III")             
+clinical_columns:          
   mutation_status:                # binary mutation-status columns to standardize
     - "EGFR_mutation_status"
     - "KRAS_mutation_status"
@@ -53,33 +52,12 @@ cv:
   method: RepeatedStratifiedKFold   # Outter CV method: StratifiedKFold, RepeatedStratifiedKFold, StratifiedShuffleSplit
   random_seed: 123                  # Fixed seed for reproducibility across tasks and models
   n_splits: 5                       # Number of stratified k-folds (required for StratifiedKFold & RepeatedStratifiedKFold)
-  n_repeats: 10                     # Number of repetitions (required for RepeatedStratifiedKFold)
+  n_repeats: 3                     # Number of repetitions (required for RepeatedStratifiedKFold)
   test_size: 0.2                    # Proportion (float) or absolute number (int) os samples to include in test split. (StratifiedShuffleSplit only)
-  inner_n_splits: 3                 # Number of inner CV folds for hyperparameter tuning
+  inner_n_splits: 2                 # Number of inner CV folds for hyperparameter tuning
   inner_method: StratifiedKFold     # Inner CV method (for hyperparameter search)
   inner_n_repeats: 2                # Only if inner_method = RepeatedStratifiedKFold
   inner_test_size: 0.2              # Only if inner_method = StratifiedShuffleSplit
-
-# -----------------------------------------------------------------------------
-# Stage binarization
-# Used by 02_generate_cv_splits.py to convert free-text stage into {0=Early, 1=Late}.
-# Add or remove stage strings here without touching any script.
-# -----------------------------------------------------------------------------
-stage_binarization:
-  early:                      # these map to label 0
-    - "Stage I"
-    - "Stage IA"
-    - "Stage IB"
-    - "Stage II"
-    - "Stage IIA"
-    - "Stage IIB"
-  late:                       # these map to label 1
-    - "Stage III"
-    - "Stage IIIA"
-    - "Stage IIIB"
-    - "Stage IV"
-  # Samples whose stage string does not appear in either list are dropped from
-  # the cancer_stage task (treated as unknown / not-reported).
 
 
 # -----------------------------------------------------------------------------
@@ -87,7 +65,7 @@ stage_binarization:
 # data only, to avoid leakage).
 # -----------------------------------------------------------------------------
 feature_selection:
-  min_cpm:              10.0    # genes with median CPM < this across training samples are removed
+  min_cpm:              10.0   # genes with median CPM < this across training samples are removed
   min_variance_pct:     25     # bottom X % of genes by variance on training samples are removed
                                # (applied after CPM filter; 10 = drop the lowest-variance decile)
 
@@ -100,28 +78,20 @@ feature_selection:
 #   pos_label  : value of the positive class (after binarization where applicable)
 # -----------------------------------------------------------------------------
 tasks:
-  cancer_stage:
-    label_col: "cancer_stage"          # will be binarized by 02_generate_cv_splits.py
-    models:
-      - random_forest
-      - xgboost
-    pos_label: 1                        # 1 = Late stage
-    exclude_genes: []
-
   EGFR_mutation:
-    label_col: "EGFR_mutation_status"  # already {0,1} after 01_load_clean_data.py
+    label_col: "EGFR_mutation_status"   # already {0,1} after 01_load_clean_data.py
     models:
-      - linear_svm
       - elasticnet_logreg
+      - xgboost
     pos_label: 1                        # 1 = Mutant
     exclude_genes:
-    - "ENSG00000146648.15"              # EGFR gene_id
+    - "ENSG00000146648.19"              # EGFR gene_id
 
   KRAS_mutation:
-    label_col: "KRAS_mutation_status"
+    label_col: "KRAS_mutation_status"   # already {0,1} after 01_load_clean_data.py
     models:
-      - linear_svm
       - elasticnet_logreg
+      - xgboost
     pos_label: 1                        # 1 = Mutant
     exclude_genes:
       - "ENSG00000133703.13"            # KRAS gene_id
@@ -142,70 +112,38 @@ tasks:
 # -----------------------------------------------------------------------------
 models:
 
-  random_forest:
-    estimator_class: "sklearn.ensemble.RandomForestClassifier"
-    search_strategy: random
-    n_iter:          30
-    scoring:         "roc_auc"
-    fixed_params:                        # params passed directly to the constructor (not searched)
-      n_jobs: 4
-      random_state: 123
-    param_grid:
-      clf__n_estimators:    [100, 200, 300]     #ORIGINALLY: [200, 500, 1000]
-      clf__max_depth:       [5, 10, 20]   # ORIGINALLY: [null, 5, 10, 20]    # null -> no limit
-      clf__min_samples_leaf: [1, 3, 5, 10]
-      clf__max_features:    ["sqrt", "log2", 0.1, 0.2]
-      clf__class_weight:    ["balanced", null]
-
-  xgboost:
-    estimator_class: "xgboost.XGBClassifier"
-    search_strategy: random
-    n_iter:          30
-    scoring:         "roc_auc"
-    fixed_params:
-      eval_metric:   "logloss"
-      use_label_encoder: false
-      n_jobs:        4
-      random_state:  123
-      verbosity:     0
-    param_grid:
-      clf__n_estimators:    [100, 200, 300]     #ORIGINALLY: [200, 500, 1000]
-      clf__max_depth:       [3, 5, 7]
-      clf__learning_rate:   [0.01, 0.05, 0.1, 0.2]
-      clf__subsample:       [0.6, 0.8, 1.0]
-      clf__colsample_bytree: [0.6, 0.8, 1.0]
-      clf__reg_alpha:       [0, 0.1, 1.0]       # L1
-      clf__reg_lambda:      [1.0, 5.0, 10.0]    # L2
-      clf__scale_pos_weight: [1, 2, 5]           # handles class imbalance
-
-  linear_svm:
-    estimator_class: "sklearn.svm.LinearSVC"
-    search_strategy: grid
-    scoring:         "roc_auc"
-    fixed_params:
-      max_iter:      5000
-      random_state:  123
-    param_grid:
-      clf__C:            [0.001, 0.01, 0.1, 1.0, 10.0]
-      clf__class_weight: ["balanced", null]
-      # Note: LinearSVC does not output probabilities natively.
-      # 03_train_model.py wraps it in CalibratedClassifierCV for ROC-AUC.
-
   elasticnet_logreg:
     estimator_class: "sklearn.linear_model.LogisticRegression"
     search_strategy: grid
     scoring:         "roc_auc"
     fixed_params:
-      solver:       "saga"      # required for elasticnet penalty
+      solver:       "saga"                          # required for elasticnet penalty
       penalty:      "elasticnet"
-      max_iter:     2000
+      max_iter:     5000
       random_state: 123
       n_jobs:       4
     param_grid:
       clf__C:         [0.001, 0.01, 0.1, 1.0, 10.0]
-      clf__l1_ratio:  [0.1, 0.3, 0.5, 0.7, 0.9]   # 0=Ridge, 1=Lasso
+      clf__l1_ratio:  [0.1, 0.3, 0.5, 0.7, 0.9]     # 0=Ridge, 1=Lasso
       clf__class_weight: ["balanced", null]
 
+  xgboost:
+    estimator_class: "xgboost.XGBClassifier"
+    search_strategy: random
+    n_iter: 15
+    scoring: "roc_auc"
+    fixed_params:
+      random_state:    123
+      n_jobs:          4
+      verbosity:       0
+      eval_metric:     "logloss"
+    param_grid:
+      clf__n_estimators:   [100, 300, 500]
+      clf__max_depth:      [3, 5, 7]
+      clf__learning_rate:  [0.01, 0.05, 0.1]
+      clf__subsample:      [0.7, 1.0]
+      clf__colsample_bytree: [0.5, 0.7, 1.0]
+      clf__scale_pos_weight: [1, 6, 12]
 
 # -----------------------------------------------------------------------------
 # Evaluation metrics computed in 03_train_model.py and aggregated in
@@ -220,6 +158,7 @@ evaluation:
     - f1_weighted
     - matthews_corrcoef
   primary_metric: "roc_auc"   # used for model comparison plot and ranking
+  threshold:      0.5         # decision threshold for converting predicted probabilities to binary labels
 
 
 # -----------------------------------------------------------------------------

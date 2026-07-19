@@ -1,8 +1,7 @@
-name: luad-pipeline
+name: malexa_env
 channels:
   - conda-forge
   - bioconda
-  - defaults
 dependencies:
   - python=3.10
   - pip
@@ -24,7 +23,3 @@ dependencies:
 
   # Config parsing
   - pyyaml>=6.0
-
-  # Serialisation (model.pkl)
-  - pip:
-    - xgboost>=1.7   # fallback if conda-forge xgboost lags
