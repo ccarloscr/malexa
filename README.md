@@ -327,6 +327,8 @@ Results below are cross-validated mean metrics across 15 folds (`RepeatedStratif
 | ElasticNet LogReg | **0.853** | **0.697** | **0.766** | **0.809** | **0.523** |
 | XGBoost | 0.824 | 0.646 | 0.644 | 0.751 | 0.378 |
 
+> **Runtime**: ~5 hours clock time on HPC (SLURM) with a concurrency cap of 6 simultaneous jobs (jobs: 6 in profiles/slurm/config.yaml). Each train_model job requests 4 CPUs and 8 GB RAM, with a 4-hour time limit.
+
 Both tasks show strong discriminative performance (ROC-AUC > 0.82 for all model–task combinations). ElasticNet logistic regression consistently outperforms XGBoost on this cohort, particularly on balanced accuracy and PR-AUC, which are more informative under the class imbalance present in LUAD mutation data. Full per-fold metrics, gene importance rankings, and model comparison plots are available in `sample_results/`.
 
 **Downloading data manually from GDC:**
