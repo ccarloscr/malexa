@@ -1,33 +1,18 @@
 # MALEXA
+### MAchine Learning EXpression-based Algorithms
 
-[WARNING!]
-### Project In-development
+[![Python](https://img.shields.io/badge/Python-%E2%89%A5_3.10-3776AB?style=flat&logo=python&logoColor=white)](https://www.python.org/) [![Snakemake](https://img.shields.io/badge/Snakemake-%E2%89%A5_7-4B0082?style=flat)](https://snakemake.github.io/) [![Scikit-Learn](https://img.shields.io/badge/scikit--learn-%E2%89%A5_1.1-F7931E?style=flat&logo=scikit-learn&logoColor=white)](https://scikit-learn.org/) [![ML Models](https://img.shields.io/badge/ML_Models-ElasticNet_%7C_XGBoost-blueviolet?style=flat)](#)
 
-## MAchine Learning EXpression-based Algorithms
 
-MALEXA uses RNA-seq raw expression data to predict cancer stage and somatic mutational status. It is built on Python and is designed to run via Snakemake locally, on an HPC cluster (SLURM), or on AWS.
+MALEXA predicts **somatic mutations status** from RNA-seq expression data using nested cross-validation and selected machine learning algorithms. It consists of a multi-step Python pipeline orchestrated by Snakemake.
 
----
+**Key features:**
 
-## Overview
-
-This pipeline addresses two independent classification problems using bulk RNA-seq expression profiles and clinical metadata (required labels to test and train the model): cancer stage and mutation status of set genes.
-
-> For convenience, running PyGDC-RNA-ETL results in the recommended input data to run MALEXA. Alternatively, any pair of RNA-seq raw count matrix and clinical metadata csv file with the specifications listed in the requirements section is suitable.
-
-The sample dataset is a cohort (n = 517) from the GDC TCGA Lung Adenocarcinoma (LUAD) project.
-
-| Question | Target | Models |
-|---|---|---|
-| Cancer stage prediction | Early (I–II) vs. Late (III–IV) | Random Forest, XGBoost |
-| Mutation status prediction | EGFR mutant vs. wild-type | Linear SVM, ElasticNet Logistic Regression |
-| Mutation status prediction | KRAS mutant vs. wild-type | Linear SVM, ElasticNet Logistic Regression |
-
-Key design principles:
-
-- **Config-driven.** Tasks, models, hyperparameter grids, evaluation metrics, and clinical column names are all declared in `config.yaml`. Adding a new task or model requires no changes to any script.
-- **Leakage-free CV.** Cross-validation splits are generated once per task (stratified, fixed seed) and shared by all models, enabling fair comparison. Fold-local feature selection (CPM filter + variance filter) is applied inside `03_train_model.py` on training data only.
-- **Separation of concerns.** Each pipeline stage is a standalone script that can be run via Snakemake or directly from the CLI for debugging.
+- **Leakage-free.** CPM filtering and variance selection are fit on training folds only; CV splits are generated once before training and shared across all models.
+- **Fully config-driven.** Adding a new task or model requires only a `config.yaml` edit.
+- **HPC-native.** Each `(task, model, fold)` job is an independent submission.
+- **Complete audiitability.** Every dropped gene, dropped sample, and data transformation decision is written to `qc_report.json` and per-job log files.
+- **Interpretable outputs.** Cross-fold, cross-model gene importance consensus rankings surface the most predictive biomarkers.
 
 ---
 
@@ -35,159 +20,103 @@ Key design principles:
 
 ```
 .
-├── Snakefile                    # DAG definition; reads everything from config.yaml
-├── config.yaml                  # Single source of truth for all pipeline settings
-├── data/
-│   └── raw/
-│       ├── tcga_luad_counts.csv     # RNA-seq raw counts (genes × samples)
-│       └── tcga_luad_clinical.csv   # Clinical metadata (samples × features)
-├── scripts/
-│   ├── 01_load_clean_data.py        # Load, align, and clean raw inputs
-│   ├── 02_generate_cv_splits.py     # Generate stratified CV splits per task
-│   ├── 03_train_model.py            # Train and evaluate one (task, model, fold)
-│   ├── 04_aggregate_metrics.py      # Aggregate metrics and produce comparison plots
-│   └── 05_interpret_report.py       # Gene importance ranking and reporting
-├── profiles/
-│   ├── slurm/                       # Snakemake SLURM profile (HPC)
-│   └── aws/                         # Snakemake AWS/k8s profile
+├── Snakefile                          # DAG definition; reads all config from config.yaml
+├── config.yaml                        # Single source for all pipeline settings
+├── run_pipeline.sh                    # Convenience launcher for SLURM environments
 ├── envs/
-│   └── pipeline.yaml                # Conda environment specification
-└── results/                         # Created at runtime; all outputs land here
+│   └── pipeline.yaml                  # Conda environment specification
+├── profiles/
+│   └── slurm/
+│       ├── config.yaml                # Snakemake SLURM profile
+│       └── slurm-status.py            # sacct-based job status poller
+├── scripts/
+│   ├── 01_load_clean_data.py          # Load, align, and clean raw inputs
+│   ├── 02_generate_cv_splits.py       # Stratified CV split generation (once per task)
+│   ├── 03_train_model.py              # Feature selection + train + evaluate (per task × model × fold)
+│   ├── 04_aggregate_metrics.py        # Aggregate metrics and produce comparison figures
+│   └── 05_interpret_report.py         # Gene importance ranking and cross-model consensus
+├── data/                              # Not provided, see Sample Data below
+│   └── raw/
+│       ├── counts.parquet             # RNA-seq raw counts (genes × samples)
+│       └── clinical.csv               # Clinical metadata (samples × features)
+└── results/                           # Created at runtime; all outputs land here
 ```
 
-> **Note:** The raw data files are not versioned in this repository. See [Data](#data) below for download instructions.
+> **Note:** Input data files are not provided. See [Sample Data](#sample-data) for input setup instructions.
 
 ---
 
-## Pipeline DAG
+## Pipeline Architecture
 
 ```
-counts.csv ──┐
-             ├─► 01_load_clean_data ──► expression_clean.csv
-clinical.csv─┘                      └► clinical_clean.csv
-                                              │
-                          ┌───────────────────┤
-                          ▼                   ▼
-              02_generate_cv_splits     02_generate_cv_splits
-                (cancer_stage)          (EGFR/KRAS_mutation)
-                          │                   │
-              ┌───────────┤       ┌───────────┤
-              ▼           ▼       ▼           ▼
-       03_train_model  (×N folds × models, run in parallel)
-              │
-              ├─► metrics.json
-              ├─► predictions.csv
-              ├─► feature_importances.csv
-              └─► model.pkl
-                          │
-              ┌───────────┴───────────┐
-              ▼                       ▼
-   04_aggregate_metrics        05_interpret_report
-   (aggregated_metrics.csv     (gene_importance_report.csv
-    model_comparison.png)       gene_importance_plot.png)
+counts.{csv,parquet} ──┐
+                        ├─► 01_load_clean_data ──► expression_clean.csv
+clinical.csv ──────────┘                        └► clinical_clean.csv
+                                                          │
+                                       ┌──────────────────┤
+                                       ▼                  ▼
+                           02_generate_cv_splits   02_generate_cv_splits
+                               (EGFR_mutation)      (KRAS_mutation)
+                                       │                  │
+                           ┌───────────┤      ┌───────────┤
+                           ▼           ▼      ▼           ▼
+                    03_train_model  (× n_splits × n_repeats × models — parallel)
+                           │
+                           ├─► metrics.json
+                           ├─► predictions.csv
+                           ├─► feature_importances.csv
+                           └─► model.pkl
+                                       │
+                       ┌───────────────┴───────────────┐
+                       ▼                               ▼
+           04_aggregate_metrics              05_interpret_report
+           (aggregated_metrics.csv           (gene_importance_report.csv
+            model_comparison.png)             gene_importance_plot.png)
 ```
 
-Each `03_train_model` job (one per task × model × fold combination) is fully independent and can be parallelised across cluster nodes or AWS workers.
+Each `03_train_model` invocation is fully independent. With `RepeatedStratifiedKFold` (`n_splits=5`, `n_repeats=10`), 50 parallel jobs are submitted per model per task.
 
 ---
 
-## Installation
+## Quick Start
 
 **Requirements:** Python ≥ 3.10, Conda or Mamba, Snakemake ≥ 7.
 
 ```bash
-# Clone the repository
+# 1. Clone the repository
 git clone https://github.com/ccarloscr/malexa.git
 cd malexa
 
-# Create and activate the environment
+# 2. Create and activate the environment
 conda env create -f envs/pipeline.yaml
-conda activate luad-pipeline
+conda activate malexa_env
 
-# Verify Snakemake can parse the DAG
-snakemake --dry-run
+# 3. Place input data under data/raw/
+# See the Sample Data section for setup instructions
+
+# 4. Check the DAG without executing anything
+snakemake --dry-run --cores 1
 ```
 
-Core Python dependencies: `snakemake`, `pandas`, `numpy`, `scikit-learn`, `xgboost`, `matplotlib`, `pyyaml`.
-
-> If using a the RNA-seq expression matrix in parquet format, make sure pyarrow is installed.
 ---
 
+## Configuration
 
-## Scripts
+All pipeline behaviour is controlled from `config.yaml`. No hardcoded logic exists in any script.
 
-### `01_load_clean_data.py` — Load and clean
+### Supported CV methods
 
-- Loads the raw counts matrix (genes × samples) and clinical metadata CSV.
-- Aligns samples by `sample_id`; logs and drops any that appear in only one source.
-- Drops genes or samples exceeding configurable missing-value thresholds (`preprocessing.max_gene_missing_frac`, `preprocessing.max_sample_missing_frac`); imputes rare residual NaNs with 0.
-- Standardises mutation-status columns from free-text encodings (e.g. `WT`, `Mutant`, `yes/no`, `0/1`) to a clean `{0, 1}` integer, leaving true unknowns as `NaN`.
-- Normalises free-text stage strings (whitespace, case) without binarising — that is a per-task concern handled downstream.
-- Emits a `qc_report.json` documenting every sample or gene dropped and why.
-
-### `02_generate_cv_splits.py` — Generate CV splits
-
-Runs **once per task**, before any model training.
-
-- For `cancer_stage`: binarises free-text stage strings to `{0 = Early, 1 = Late}` using the mapping in `config.yaml[stage_binarization]`. Samples with unmapped stage values are excluded and logged.
-- For mutation tasks: drops samples where the status is `NaN` (unknown after script 01).
-- Runs `StratifiedKFold` with the seed from `config.yaml[cv.random_seed]`.
-- Writes a JSON file containing, for each fold, the list of **sample IDs** (not integer positions) assigned to training and test sets. Using sample IDs ensures splits remain valid if the matrix is ever reordered.
-
-Because splits are generated once and shared across models, all models for a given task are evaluated on exactly the same data partitions — making performance comparison fair by construction.
-
-### `03_train_model.py` — Train model
-
-Runs **once per (task, model, fold)** combination; these jobs are fully independent and embarrassingly parallel.
-
-- Loads the fold's train/test sample IDs from the splits JSON.
-- Applies fold-local feature selection **on training data only** to avoid leakage:
-  1. CPM filter: removes genes with median CPM below `feature_selection.min_cpm`.
-  2. Variance filter: removes the bottom `feature_selection.min_variance_pct` percent of genes by variance across training samples.
-- Wraps the configured estimator in a `sklearn` `Pipeline` (step name `"clf"`) and performs hyperparameter search (`GridSearchCV` or `RandomizedSearchCV`) as configured per model.
-- Special handling: `LinearSVC` is wrapped in `CalibratedClassifierCV` to enable probability outputs for ROC-AUC scoring.
-- Writes per-fold outputs: `metrics.json`, `predictions.csv`, `feature_importances.csv`, `model.pkl`.
-
-### `04_aggregate_metrics.py` — Aggregate and compare
-
-- Collects all `metrics.json` files for a task, assembles a long-format DataFrame (one row per model × fold).
-- Computes per-model mean ± std for every metric listed under `evaluation.metrics`.
-- Writes `aggregated_metrics.csv` (per-fold rows plus summary rows tagged `fold = -1` for mean, `fold = -2` for std).
-- Generates `model_comparison.png`: one panel per metric, scatter + mean ± SD error bars per model, sorted by `evaluation.primary_metric`, with chance-level reference lines.
-
-### `05_interpret_report.py` — Interpret and report
-
-- Collects all `feature_importances.csv` files for a task.
-- Aggregates across folds using the strategy in `config.yaml[interpretation.aggregation]`:
-  - `mean_rank`: ranks genes by |importance| within each fold, then averages ranks across folds. Robust to scale differences between model families.
-  - `mean_importance`: averages raw importance scores (appropriate when scores are already on a comparable scale).
-- Computes a **cross-model consensus ranking**: genes appearing as important across multiple models receive a combined score.
-- Writes `gene_importance_report.csv` (columns: `gene`, `model`, `mean_importance`, `std_importance`, `mean_rank`, `n_folds_present`, `consensus_rank`, `n_models_present`).
-- Generates `gene_importance_plot.png`: one panel per model plus a consensus panel, showing the top-N genes.
-
----
-
-## Configuration (`config.yaml`)
-
-All pipeline behaviour is controlled from `config.yaml`.
-
----
-
-## Data
-
-Raw data files are **not included** in this repository. Download from GDC:
-
-1. **RNA-seq raw counts** (`tcga_luad_counts.csv`): TCGA-LUAD HTSeq raw counts from the GDC Data Portal (`https://portal.gdc.cancer.gov`). Select Project `TCGA-LUAD`, Data Category `Transcriptome Profiling`, Data Type `Gene Expression Quantification`, Workflow Type `HTSeq - Counts`. Export as a single merged matrix with genes as rows and `sample_id` values as column headers.
-
-2. **Clinical metadata** (`tcga_luad_clinical.csv`): Clinical supplement from the GDC Data Portal for `TCGA-LUAD`. The file must contain at minimum the columns `sample_id`, `cancer_stage`, `EGFR_mutation_status`, and `KRAS_mutation_status`. Column names are configurable in `config.yaml`.
-
-Place both files under `data/raw/` before running the pipeline.
+| Method | Config key | Parameters used |
+|---|---|---|
+| `StratifiedKFold` | `method: StratifiedKFold` | `n_splits`, `random_seed` |
+| `RepeatedStratifiedKFold` | `method: RepeatedStratifiedKFold` | `n_splits`, `n_repeats`, `random_seed` |
+| `StratifiedShuffleSplit` | `method: StratifiedShuffleSplit` | `n_splits`, `test_size`, `random_seed` |
 
 ---
 
 ## Running the Pipeline
 
-### Dry run (check the DAG without executing)
+### Dry run
 
 ```bash
 snakemake --dry-run --cores 1
@@ -199,132 +128,222 @@ snakemake --dry-run --cores 1
 snakemake --cores 8
 ```
 
-### HPC cluster (SLURM)
+### HPC — SLURM
+
+The recommended approach for large cohorts. Each `(task, model, fold)` combination becomes an independent SLURM job. The `run_pipeline.sh` launcher is designed to be kept alive in a 'screen' or 'tmux' session on the login node:
 
 ```bash
-snakemake --profile profiles/slurm --jobs 200
+screen -S malexa
+conda activate malexa
+./run_pipeline.sh
+# Leave screen: Ctrl+A d
+# Return screen: screen -r malexa
 ```
 
-The SLURM profile passes each `train_model` job as an independent SLURM job, making the most expensive step (hyperparameter search × folds) fully parallel across nodes.
-
-### AWS
+Or equivalently:
 
 ```bash
-snakemake --profile profiles/aws --jobs 200
+snakemake \
+    --profile profiles/slurm \
+    --latency-wait 60 \
+    --rerun-incomplete \
+    --keep-going
 ```
 
-Compatible with Snakemake's native AWS Batch executor, Tibanna, and Kubernetes. No pipeline code changes are needed between execution environments.
+The SLURM profile (`profiles/slurm/config.yaml`) controls the number of concurrent jobs, default memory/time fallbacks, and the partition. The `slurm-status.py` script polls `sacct` to detect failed jobs immediately rather than waiting for output files to appear.
 
-### Running a single script standalone (for debugging)
+> **Before running on your HPC:** update the `conda activate` path in `run_pipeline.sh` and the `partition` name in `profiles/slurm/config.yaml` to match your cluster configuration.
 
-Each script has a CLI entry point and can be run outside Snakemake:
+### Standalone script execution
+
+Every script can be called directly for debugging without Snakemake:
+
+> The following instructions default to predict EGFR mutations, update '--task' options and directory paths.
 
 ```bash
-# Step 1
+# Step 1 — load and clean
 python scripts/01_load_clean_data.py \
-    --counts data/raw/tcga_luad_counts.csv \
-    --clinical data/raw/tcga_luad_clinical.csv \
-    --config config.yaml \
+    --counts    data/raw/counts.parquet \
+    --clinical  data/raw/clinical.csv \
+    --config    config.yaml \
     --out-expression results/data/expression_clean.csv \
-    --out-clinical results/data/clinical_clean.csv \
-    --out-qc results/data/qc_report.json
+    --out-clinical   results/data/clinical_clean.csv \
+    --out-qc         results/data/qc_report.json
 
-# Step 2 (one task at a time)
+# Step 2 — generate splits for one task
 python scripts/02_generate_cv_splits.py \
     --expression results/data/expression_clean.csv \
-    --clinical results/data/clinical_clean.csv \
-    --task cancer_stage \
-    --config config.yaml \
-    --out-splits results/splits/cancer_stage_splits.json
+    --clinical   results/data/clinical_clean.csv \
+    --task       EGFR_mutation \
+    --config     config.yaml \
+    --out-splits results/splits/EGFR_mutation_splits.json
 
-# Step 4 (aggregate after training)
+# Step 4 — aggregate metrics after training
 python scripts/04_aggregate_metrics.py \
-    --metrics-dir results/cancer_stage \
-    --task cancer_stage \
-    --config config.yaml \
-    --out-table results/cancer_stage/aggregated_metrics.csv \
-    --out-plot  results/cancer_stage/model_comparison.png
+    --metrics-dir results/EGFR_mutation \
+    --task        EGFR_mutation \
+    --config      config.yaml \
+    --out-table   results/EGFR_mutation/aggregated_metrics.csv \
+    --out-plot    results/EGFR_mutation/model_comparison.png
 
-# Step 5
+# Step 5 — gene importance report
 python scripts/05_interpret_report.py \
-    --importances-dir results/cancer_stage \
-    --task cancer_stage \
-    --config config.yaml \
-    --out-report results/cancer_stage/gene_importance_report.csv
+    --importances-dir results/EGFR_mutation \
+    --task            EGFR_mutation \
+    --config          config.yaml \
+    --out-report      results/EGFR_mutation/gene_importance_report.csv \
+    --out-plot        results/EGFR_mutation/gene_importance_plot.png
 ```
+
+---
+
+## Scripts
+
+### `01_load_clean_data.py` — Load and clean
+
+Runs **once** for the entire project.
+
+- Loads the raw counts matrix (genes × samples; CSV or Parquet) and clinical metadata CSV.
+- Aligns samples by `sample_id`; logs and drops any that appear in only one source.
+- Drops genes and samples exceeding configurable missing-value thresholds (`max_gene_missing_frac`, `max_sample_missing_frac`); imputes rare residual NaNs with 0.
+- Standardises free-text mutation-status encodings (`WT`, `Mutant`, `yes/no`, `0/1`, etc.) to a clean `{0, 1}` integer; true unknowns become `NaN`.
+- Emits a `qc_report.json` documenting every gene/sample dropped and the reason.
+
+> No gene filtering occurs at this step to prevent leakage, these operations happen downstream within fold boundaries.
+
+### `02_generate_cv_splits.py` — Generate CV splits
+
+Runs **once per task**, before any model training.
+
+- Extracts and validates the target label column for the requested task.
+- Drops samples with unknown labels (`NaN` after step 01) and logs their IDs.
+- Applies the configured CV strategy (`StratifiedKFold`, `RepeatedStratifiedKFold`, or `StratifiedShuffleSplit`).
+- Writes a JSON file with train/test **sample ID lists** for every split, ensuring validity even if the matrix is reordered later.
+
+Because splits are generated once and shared, all models for a given task are evaluated on exactly the same data partitions, making performance comparison fair.
+
+### `03_train_model.py` — Train and evaluate
+
+Runs **once per `(task, model, fold)`** combination. All such jobs are fully independent and parallel.
+
+Inside each fold, on training data only:
+
+1. **CPM filter**: removes genes with median CPM below `feature_selection.min_cpm`.
+2. **Variance filter**: removes the bottom `feature_selection.min_variance_pct` percent of genes by variance.
+3. **log1p normalisation**: applied after filtering.
+4. **StandardScaler**: fit on training samples, applied to test.
+5. **Hyperparameter search**: `GridSearchCV` or `RandomizedSearchCV` with an inner stratified CV on the training fold.
+6. **Evaluation**: best pipeline is scored on the held-out test fold.
+
+Special handling: `LinearSVC` is wrapped in `CalibratedClassifierCV` to enable probability outputs required for ROC-AUC. The target gene (e.g. EGFR, KRAS) is excluded per-task to prevent expression-of-the-target leakage.
+
+Outputs: `metrics.json`, `predictions.csv`, `feature_importances.csv`, `model.pkl`.
+
+### `04_aggregate_metrics.py` — Aggregate and visualise
+
+- Collects all `metrics.json` files for a task and assembles a long-format DataFrame (one row per model × fold).
+- Computes per-model mean ± std for every configured evaluation metric.
+- Writes `aggregated_metrics.csv` with per-fold rows plus summary rows (tagged `fold = "mean"` / `"std"`).
+- Generates `model_comparison.png`: one panel per metric, scatter + mean ± 1-SD error bars, sorted by `primary_metric`, with reference lines.
+
+### `05_interpret_report.py` — Gene importance and consensus ranking
+
+- Collects all `feature_importances.csv` files for a task (all models × folds).
+- Aggregates using the configured strategy:
+  - `mean_rank`: ranks genes by |importance| within each fold, then averages ranks across folds. Robust to scale differences between model families.
+  - `mean_importance`: averages raw importance scores (appropriate when scores are comparable).
+- Computes a **cross-model consensus ranking**: genes that appear as important across multiple models receive a combined score.
+- Writes `gene_importance_report.csv` and `gene_importance_plot.png` (one panel per model + one consensus panel).
 
 ---
 
 ## Outputs
 
-After a full pipeline run, the `results/` directory has the following structure:
+After a full run, `results/` has the following structure:
 
 ```
 results/
 ├── data/
-│   ├── expression_clean.csv          # Aligned, QC-filtered counts matrix
-│   ├── clinical_clean.csv            # Standardised clinical metadata
-│   └── qc_report.json                # Audit log of dropped genes/samples
+│   ├── expression_clean.csv              # QC-filtered, aligned counts matrix
+│   ├── clinical_clean.csv                # Standardised clinical metadata
+│   └── qc_report.json                    # Audit log: every dropped gene/sample
 ├── splits/
-│   ├── cancer_stage_splits.json      # CV fold assignments for stage task
-│   ├── EGFR_mutation_splits.json
+│   ├── EGFR_mutation_splits.json         # CV fold sample-ID assignments
 │   └── KRAS_mutation_splits.json
-├── cancer_stage/
-│   ├── random_forest/
-│   │   └── fold{0..4}/
+├── EGFR_mutation/
+│   ├── linear_svm/
+│   │   └── fold{0..49}/                  # 5 splits × 10 repeats
 │   │       ├── metrics.json
 │   │       ├── predictions.csv
 │   │       ├── feature_importances.csv
 │   │       └── model.pkl
-│   ├── xgboost/
-│   │   └── fold{0..4}/  ...
-│   ├── aggregated_metrics.csv        # Per-fold + mean/std rows for all models
-│   ├── model_comparison.png          # Multi-metric comparison figure
-│   ├── gene_importance_report.csv    # Ranked gene list with consensus scores
-│   └── gene_importance_plot.png      # Top-N genes per model + consensus panel
-├── EGFR_mutation/  ...               # Same structure
-├── KRAS_mutation/  ...               # Same structure
-└── logs/                             # One log file per rule invocation
+│   ├── elasticnet_logreg/
+│   │   └── fold{0..49}/  ...
+│   ├── aggregated_metrics.csv
+│   ├── model_comparison.png
+│   ├── gene_importance_report.csv
+│   └── gene_importance_plot.png
+├── KRAS_mutation/  ...                   # Same structure
+└── logs/                                 # One log file per rule invocation
+    ├── load_clean_data.log
+    ├── generate_cv_splits_EGFR_mutation.log
+    └── train_EGFR_mutation_linear_svm_fold0.log  ...
 ```
 
 ### Key output files
 
 | File | Description |
 |---|---|
-| `data/qc_report.json` | Audit trail: genes/samples dropped, thresholds applied |
-| `splits/<task>_splits.json` | Stratified fold indices (sample IDs) shared by all models |
-| `<task>/aggregated_metrics.csv` | ROC-AUC, PR-AUC, balanced accuracy, F1, MCC per model × fold, plus mean ± std summary rows |
-| `<task>/model_comparison.png` | Visual comparison of all models across all configured metrics |
-| `<task>/gene_importance_report.csv` | Top genes ranked by mean_rank or mean_importance, with cross-model consensus scores |
-| `<task>/gene_importance_plot.png` | Horizontal bar chart of top-N genes per model and consensus |
+| `data/qc_report.json` | Full audit trail of genes/samples dropped and thresholds applied |
+| `splits/<task>_splits.json` | Stratified fold sample-ID assignments shared by all models |
+| `<task>/aggregated_metrics.csv` | ROC-AUC, PR-AUC, balanced accuracy, F1, MCC per model × fold + mean ± std summary |
+| `<task>/model_comparison.png` | Multi-metric visual comparison of all models across all folds |
+| `<task>/gene_importance_report.csv` | Genes ranked by mean_rank or mean_importance with cross-model consensus scores |
+| `<task>/gene_importance_plot.png` | Horizontal bar chart of top-N genes per model and consensus panel |
 
 ---
 
-## Reproducibility
+## Sample Data
 
-- The random seed (`config.yaml[cv.random_seed]`) controls both the `StratifiedKFold` split and all model random states.
-- CV splits are generated once and stored as JSON before any model is trained; all models for a given task read the same split file.
-- Fold-local feature selection is fit exclusively on training samples, preventing any leakage from test data into the feature set.
-- The `qc_report.json` and per-fold log files provide a complete audit trail of every data transformation.
+> ⚠️ Raw data files are **not included** in this repository.
 
-To exactly reproduce a run: fix the seed in `config.yaml`, use the same conda environment (`envs/pipeline.yaml`), and ensure the raw input files are identical (check MD5 checksums against the GDC manifest).
+The pipeline is validated on a cohort of **517 samples** from the GDC TCGA Lung Adenocarcinoma (LUAD) project, processed with [PyGDC-RNA-ETL](https://github.com/ccarloscr/pygdc-rna-etl).
+
+**Downloading manually from GDC:**
+
+1. **RNA-seq raw counts**: visit [portal.gdc.cancer.gov](https://portal.gdc.cancer.gov), select Project, Data Category `Transcriptome Profiling`, Data Type `Gene Expression Quantification`, Workflow Type `STAR - Counts`. Export as a merged matrix with Ensembl gene IDs as row index and `sample_id` values as column headers. Save as `data/raw/counts.parquet` (or `.csv`).
+
+2. **Clinical metadata**: download the clinical supplement for your Project. The file must contain at minimum: `sample_id`, `X_mutation_status`. Where X refers to the gene of interest. Column names are configurable in `config.yaml`. Save as `data/raw/clinical.csv`.
+
+A sample output directory generated from the TCGA-LUAD cohort (n = 517) will be added to this repository once validation is complete.
+
+---
+
+## Design Principles
+
+**Leakage-free.** CV splits are written before any model sees the data. All feature selection (CPM filter, variance filter), normalization (log1p), and scaling (StandardScaler) is fit on training folds only, applied to test folds. Exclusion of the target gene is optional in 'exclude_genes' but highly recommended.
+
+**Config is the API.** Every parameter (thresholds, CV strategy, model hyperparameter grids, evaluation metrics, interpretation strategy) is defined in `config.yaml`. No task or model logic is hardcoded in any script.
+
+**Separation of concerns.** Each script has a single responsibility and a CLI entry point. The Snakemake DAG wires them together, but each script is debuggable in isolation.
 
 ---
 
 ## Extending the Pipeline
 
-**Add a new task** (e.g. predicting smoking status):
+### Add a new classification task
 
 ```yaml
 # config.yaml
 tasks:
-  smoking_status:
-    label_col: "smoking_history"   # must exist in clinical CSV
-    models: [random_forest, elasticnet_logreg]
+  TP53_mutation:
+    label_col: "TP53_mutation_status"        # must exist in clinical CSV
+    models: [linear_svm, elasticnet_logreg]
     pos_label: 1
+    exclude_genes: ["ENSG00000141510"]       # TP53 Ensembl ID
 ```
 
-**Add a new model** (e.g. LightGBM):
+### Add a new model
 
 ```yaml
 # config.yaml
@@ -334,7 +353,7 @@ models:
     search_strategy: random
     n_iter: 30
     scoring: "roc_auc"
-    fixed_params: {n_jobs: 4, random_state: 42, verbose: -1}
+    fixed_params: {n_jobs: 4, random_state: 123, verbose: -1}
     param_grid:
       clf__n_estimators:  [100, 300, 500]
       clf__max_depth:     [3, 5, 7]
@@ -342,7 +361,40 @@ models:
       clf__num_leaves:    [15, 31, 63]
 ```
 
-Then reference `lightgbm` in any task's `models` list. The Snakefile and all scripts pick it up automatically.
+Then reference `lightgbm` in any task's `models` list. No Snakefile or script changes are required.
+
+---
+
+## Reproducibility
+
+- The random seed (`cv.random_seed` in `config.yaml`) controls both the CV split strategy and all model random states.
+- CV splits are generated once and stored as JSON before any model is trained; all models for a given task read the same file.
+- Fold-local feature selection is fit exclusively on training samples.
+- The `qc_report.json` and per-fold log files in `results/logs/` provide a complete auditability of every data transformation.
+
+To exactly reproduce a run: fix the seed in `config.yaml`, use the same Conda environment (`envs/pipeline.yaml`), and verify input file integrity against the GDC manifest checksums.
+
+---
+
+## Dependencies
+
+Core dependencies defined in `envs/pipeline.yaml`:
+
+| Package | Role |
+|---|---|
+| `snakemake-minimal >= 7.0` | Workflow orchestration and job submission |
+| `pandas >= 1.5` | Data handling |
+| `numpy >= 1.23` | Numerical operations |
+| `pyarrow` | Parquet handling |
+| `scikit-learn >= 1.1` | ML models, CV, feature selection, evaluation |
+| `xgboost >= 1.7` | Gradient boosting classifier |
+| `matplotlib >= 3.6` | Figures |
+| `pyyaml >= 6.0` | Config parsing |
+
+```bash
+conda env create -f envs/pipeline.yaml
+conda activate malexa_env
+```
 
 ---
 
