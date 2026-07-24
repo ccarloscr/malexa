@@ -317,19 +317,19 @@ Results below are cross-validated mean metrics across 15 folds (`RepeatedStratif
 
 | Model | ROC-AUC | PR-AUC | Balanced Accuracy | F1 (weighted) | MCC |
 |---|---|---|---|---|---|
-| ElasticNet LogReg | **0.845** | **0.627** | **0.757** | **0.870** | **0.504** |
+| ElasticNet | **0.845** | **0.627** | **0.757** | **0.870** | **0.504** |
 | XGBoost | 0.835 | 0.542 | 0.590 | 0.833 | 0.304 |
 
 #### KRAS mutation prediction
 
 | Model | ROC-AUC | PR-AUC | Balanced Accuracy | F1 (weighted) | MCC |
 |---|---|---|---|---|---|
-| ElasticNet LogReg | **0.853** | **0.697** | **0.766** | **0.809** | **0.523** |
+| ElasticNet | **0.853** | **0.697** | **0.766** | **0.809** | **0.523** |
 | XGBoost | 0.824 | 0.646 | 0.644 | 0.751 | 0.378 |
 
 > **Runtime**: ~5 hours clock time on HPC (SLURM) with a concurrency cap of 6 simultaneous jobs (jobs: 6 in profiles/slurm/config.yaml). Each train_model job requests 4 CPUs and 8 GB RAM, with a 4-hour time limit.
 
-Both tasks show strong discriminative performance (ROC-AUC > 0.82 for all model–task combinations). ElasticNet logistic regression consistently outperforms XGBoost on this cohort, particularly on balanced accuracy and PR-AUC, which are more informative under the class imbalance present in LUAD mutation data. Full per-fold metrics, gene importance rankings, and model comparison plots are available in `sample_results/`.
+Both tasks show strong discriminative performance (ROC-AUC > 0.82 for all model–task combinations). ElasticNet consistently outperforms XGBoost on this cohort, particularly on balanced accuracy and PR-AUC, which are more informative under the class imbalance present in LUAD mutation data. Full per-fold metrics, gene importance rankings, and model comparison plots are available in `sample_results/`.
 
 **Downloading data manually from GDC:**
 
